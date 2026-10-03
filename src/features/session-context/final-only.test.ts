@@ -138,43 +138,38 @@ const input = {
   timestamp: "2026-10-03",
   retries: 0,
 };
-const group = {
-  name: "group",
-  channels: [
-    {
-      channelId: "parent",
-      sessionMode: "thread" as const,
-      sessionContext: "final-only" as const,
-    },
-    { channelId: "full", sessionMode: "shared" as const },
-  ],
-};
 beforeEach(() => {
   readSessionEntries.mockReset().mockReturnValue(new Map());
   readCommittedConversations.mockReset().mockReturnValue([reference]);
 });
 
-it("resolves configured parent-channel context using public references and the supplied owner", () => {
-  expect(resolveSessionContext(input, group, "worker")).toEqual([]);
+it.each([
+  "main",
+  "worker",
+])("resolves queued cron policy using public references and owner %s", (agentId) => {
+  expect(
+    resolveSessionContext(
+      { ...input, cronJobId: "cron", cronSessionMode: "final-only" },
+      agentId,
+    ),
+  ).toEqual([]);
   expect(readCommittedConversations).toHaveBeenCalledExactlyOnceWith("group", {
     publicOnly: true,
   });
   expect(readSessionEntries).toHaveBeenCalledExactlyOnceWith(
     "group",
     "child",
-    "worker",
+    agentId,
     [1, 2],
   );
 });
 
 it.each([
-  { routingChannelId: undefined },
-  { routingChannelId: "unconfigured" },
-  { routingChannelId: "full" },
-  { cronJobId: "cron" },
-])("preserves full history outside an opted-in channel (%j)", (override) => {
+  {},
+  { cronJobId: "cron", cronSessionMode: "destination" as const },
+])("preserves full history when the queue input has no policy (%j)", (override) => {
   expect(
-    resolveSessionContext({ ...input, ...override }, group, "main"),
+    resolveSessionContext({ ...input, ...override }, "main"),
   ).toBeUndefined();
   expect(readCommittedConversations).not.toHaveBeenCalled();
   expect(readSessionEntries).not.toHaveBeenCalled();

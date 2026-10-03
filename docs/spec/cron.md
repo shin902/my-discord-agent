@@ -73,7 +73,7 @@ data/cron/
 | `prompt` | handler なし時必須 | string | エージェントへのプロンプト |
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
 | `deliveryMode` | handler なし時必須 | `"direct"` \| `"new-thread"` \| `"item-thread"` | Discordへの投稿方法（後述） |
-| `sessionMode` | handler なし時必須 | `"per-run"` \| `"destination"` | セッションIDの決定方法（後述） |
+| `sessionMode` | handler なし時必須 | `"per-run"` \| `"destination"` \| `"final-only"` | セッションIDと継続contextの決定方法（後述） |
 | `noReply` | オプション | boolean | `true`なら、このリクエストのsystem promptへ通知不要時に独立行 `<NO_REPLY>` を返す指示を追加。既定値は`false` |
 | `mode` | オプション | `"to-channel"` \| `"to-thread"` | 旧設定との後方互換用。新規設定では使用しない |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く） |
@@ -122,6 +122,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 | `deliveryMode` | `item-thread` | 一時sessionでAIを実行し、応答が存在する場合だけ親メッセージを投稿して、そのmessage IDへsessionを昇格してから1項目用スレッドを作成する |
 | `sessionMode` | `per-run` | 実行ごとに一意なセッションIDを生成する |
 | `sessionMode` | `destination` | 実際の投稿先チャンネルまたはスレッドIDをセッションIDとして使う |
+| `sessionMode` | `final-only` | `destination` と同じセッションIDを使い、過去公開finalだけを継続contextへ渡す |
 
 代表的な組み合わせ:
 
@@ -131,13 +132,37 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 | `direct` + `destination` | 投稿先単位で履歴を継続する |
 | `new-thread` + `destination` | 毎回新規スレッドを作り、その後のユーザー返信でも履歴を継続する |
 | `new-thread` + `per-run` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
-| `item-thread` + `destination` | 1項目ごとに一時sessionでAIを実行し、通常応答がある場合だけ親メッセージと独立スレッドを作り、そのthread IDへsessionを昇格する。`item-thread` は `destination` 必須 |
+| `item-thread` + `destination` | 1項目ごとに一時sessionでAIを実行し、通常応答がある場合だけ親メッセージと独立スレッドを作り、そのthread IDへsessionを昇格する。`item-thread` は `destination` または `final-only` 必須 |
+
+`direct` / `new-thread` / `item-thread` は `final-only` とも組み合わせられる。
 
 item-thread昇格・rollbackは保存済みjobのownerを維持する。同じgroup・Bot owner・投稿先を使うchannel会話とdestination cronは履歴を共有し、異なるownerの履歴は分離する。
 
 応答中にtrim後が完全一致する独立行 `<NO_REPLY>` があれば、通常会話、および`direct`/`new-thread`/`item-thread` cronは正常完了してDiscord deliveryを作らない。inlineの言及は通常どおり配送する。cronの`noReply: true`はこのプロトコルをsystem promptで案内するだけで、判定自体は常時有効である。`item-thread`はDiscord状態を応答後まで作らないため、NO_REPLY時は親メッセージもthreadも作成しない。Mail/RSS sourceは無配信でも正常にACK/finalizeする。Mail ACK失敗時は未読のまま次回cronで再取得し、RSS settle失敗時はclaimを解放して次回cronで再取得する。`new-thread` + `destination` はthread IDをAIセッションに使うため実行前にスレッドを作成し、NO_REPLY時も投稿のないスレッドが残る。
 
 旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。`mail.ts` はMail専用のroute keyを付け、常に `direct` + `per-run` でenqueueする。Discord deliveryはMail専用のthread mappingを使用する。
+
+### final-only sessionMode
+
+cron jobに `"sessionMode": "final-only"` を明示した場合、次runのLLM contextを初期context snapshot・同じ `(group, agent_id, sessionId)` の過去runの採用済み公開final・今回の入力に絞る。session IDは `destination` と同じ規則を使う。`per-run` / `destination` は従来のfull historyを維持する。未対応の値は起動時config errorになる。
+
+```json
+{
+  "id": "github-check",
+  "schedule": "*/10 * * * *",
+  "groupName": "main",
+  "channelId": "123",
+  "deliveryMode": "direct",
+  "sessionMode": "final-only",
+  "prompt": "未処理のGitHub PRを確認してください"
+}
+```
+
+Mainとjobの `botId` で選択されたBotは共通contractを使う。jobのsessionModeは `enqueueCronInbox()` でqueue入力に保存し、pollerは保存済みmodeを使う。設定変更は再起動後の新規enqueueに適用し、受付済みqueueのpolicyは変えない。channel・group・Bot profileにはこの設定を設けず、通常のDiscord入力や同期 `bot run/resume`・`/bot` Taskには継承しない。handlerがenqueue時に `per-run` を選んだ場合はfull historyになる。既存のMail handlerは常に `per-run` を使うため対象外。
+
+初版は採用順に過去finalを全件引き継ぎ、件数/token上限やLLMによる要約は設けない。finalは成功結果commit時のassistant entry参照で識別し、非空textの `stop` / `length` 応答だけを使う。tool call/result、途中assistant、過去user/event、skill invocation、steering instructionは自動再注入しない。system prompt・contextFiles・保存済み初回Agent Memoryなどの初期snapshotは維持し、今回のskill invocationやsteerは通常どおり届く。
+
+失敗・キャンセル・finalなし・採用されなかったretryは除外する。`<NO_REPLY>` / `discordOutput: "none"` など配信を抑制した結果も含めない。「公開」は配送対象の成功結果として採用された時点を意味し、Discord配送完了は待たない。raw trajectoryは削除・圧縮・書き換えず保持する。識別参照や配信可否のmetadataがない旧履歴は推測して採用しない。[保存・移行](../storage.md#session-trajectory)も参照。
 
 ---
 

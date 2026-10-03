@@ -313,6 +313,48 @@ describe("cronジョブの configOverride", () => {
     ]);
   });
 
+  it.each([
+    "direct",
+    "new-thread",
+    "item-thread",
+  ] as const)("accepts and enqueues destination final-only policy with %s delivery", async (deliveryMode) => {
+    const raw = [
+      {
+        id: "finals",
+        schedule: "1h",
+        groupName: "g",
+        channelId: "ch",
+        prompt: "check",
+        deliveryMode,
+        sessionMode: "final-only",
+      },
+    ];
+    const { mod, appendInboxMock } = await importRunnerWithMocks(raw);
+    const [job] = await mod.loadAndValidateCron();
+    expect(job.sessionMode).toBe("final-only");
+    await mod.executeJob(job);
+    expect(appendInboxMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        cronJobId: "finals",
+        cronSessionMode: "final-only",
+      }),
+    );
+    expect(appendInboxMock.mock.calls[0][0].configOverride).toBeUndefined();
+  });
+
+  it("rejects an unknown sessionMode at config load", async () => {
+    const { mod } = await importRunnerWithMocks([
+      {
+        id: "invalid-mode",
+        schedule: "1h",
+        handler: "jobs/session-cleanup.ts",
+        deliveryMode: "direct",
+        sessionMode: "unknown",
+      },
+    ]);
+    await expect(mod.loadAndValidateCron()).rejects.toThrow(/sessionMode/);
+  });
+
   it('skills: "*" 付きジョブをスキーマで拒否する', async () => {
     const raw = [
       {
@@ -409,5 +451,6 @@ describe("cronジョブの configOverride", () => {
     expect(appendInboxMock.mock.calls[0][0]).not.toHaveProperty(
       "configOverride",
     );
+    expect(appendInboxMock.mock.calls[0][0].cronSessionMode).toBe("per-run");
   });
 });

@@ -49,7 +49,7 @@ const CronJobSchema = z
     prompt: z.string().optional(),
     channelId: z.string().optional(),
     deliveryMode: z.enum(["direct", "new-thread", "item-thread"]).optional(),
-    sessionMode: z.enum(["per-run", "destination"]).optional(),
+    sessionMode: z.enum(["per-run", "destination", "final-only"]).optional(),
     noReply: z.boolean().optional(),
     // 後方互換。新規設定では deliveryMode/sessionMode を使用する。
     mode: z.enum(["to-channel", "to-thread"]).optional(),
@@ -76,12 +76,13 @@ const CronJobSchema = z
     }
     if (
       job.deliveryMode === "item-thread" &&
-      job.sessionMode !== "destination"
+      job.sessionMode !== "destination" &&
+      job.sessionMode !== "final-only"
     ) {
       ctx.addIssue({
         code: "custom",
         message:
-          "item-thread は sessionMode=destination と組み合わせてください",
+          "item-thread は sessionMode=destination または final-only と組み合わせてください",
       });
     }
     if (job.schedule === "@startup" && job.handler != null) {

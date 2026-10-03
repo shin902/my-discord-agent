@@ -474,7 +474,7 @@ describe("loadAndValidateCron", () => {
     );
 
     await expect(loadAndValidateCron()).rejects.toThrow(
-      "item-thread は sessionMode=destination と組み合わせてください",
+      "item-thread は sessionMode=destination または final-only と組み合わせてください",
     );
   });
 

@@ -624,6 +624,7 @@ function usesCronDestinationSession(msg: InboxMessage): boolean {
   // used the created thread as their conversation identity.
   return (
     msg.cronSessionMode === "destination" ||
+    msg.cronSessionMode === "final-only" ||
     (msg.cronSessionMode === undefined &&
       (msg.cronThread === true ||
         msg.cronDeliveryMode === "new-thread" ||
@@ -786,6 +787,10 @@ async function processCronThreadDelivery(
         try {
           return await sendMessage(msg.groupName, sessionId, msg.content, {
             agentId,
+            historyMessages: resolveSessionContext(
+              { ...msg, sessionId },
+              agentId,
+            ),
             onConversation: (entries) => {
               conversation = entries;
             },
@@ -1151,11 +1156,7 @@ export async function processMessage(
               msg.content,
               {
                 agentId,
-                historyMessages: resolveSessionContext(
-                  msg,
-                  groupConfig,
-                  agentId,
-                ),
+                historyMessages: resolveSessionContext(msg, agentId),
                 imagePaths: images?.imagePaths,
                 onDiscordEvent: (event) => {
                   if (msg.discordOutput === "none") return;

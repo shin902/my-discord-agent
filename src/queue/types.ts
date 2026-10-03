@@ -2,7 +2,7 @@ import type { SessionSource } from "../agent/source.js";
 import type { AgentConfig } from "../config/groups.js";
 
 export type CronDeliveryMode = "direct" | "new-thread" | "item-thread";
-export type CronSessionMode = "per-run" | "destination";
+export type CronSessionMode = "per-run" | "destination" | "final-only";
 
 export interface AttachmentRef {
   url: string;

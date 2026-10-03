@@ -4,7 +4,6 @@ import {
   type AgentMemorySettings,
   AgentMemorySettingsSchema,
 } from "../features/agent-memory/config.js";
-import { SessionContextSchema } from "../features/session-context/config.js";
 import { loadRawGroups } from "./config.js";
 
 const THINKING_LEVELS = [
@@ -91,7 +90,6 @@ const ChannelConfigSchema = AgentConfigSchema.extend({
   channelId: z.string(),
   botId: z.string().min(1).optional(),
   sessionMode: z.enum(["shared", "thread", "auto-thread", "email-mode"]),
-  sessionContext: SessionContextSchema.optional(),
   appendUserOnly: z.boolean().optional(),
   // true の場合、親チャンネルとその配下スレッドの通常メッセージはBotへのmention時だけ処理する。
   requiredMention: z.boolean().optional(),
@@ -107,8 +105,6 @@ const ChannelConfigSchema = AgentConfigSchema.extend({
 
 // allowMention/toolLogArgs は配送・観測設定であり、group限定のままにする。
 const GroupConfigSchema = AgentRuntimeConfigSchema.extend({
-  // Fail early instead of silently stripping a misplaced channel-only setting.
-  sessionContext: z.never().optional(),
   name: z.string(),
   bot: z.string().min(1).optional(),
   channels: z.array(ChannelConfigSchema),

@@ -45,10 +45,11 @@ function resolveModes(ctx: CronEnqueueContext): {
   if (ctx.deliveryMode && ctx.sessionMode) {
     if (
       ctx.deliveryMode === "item-thread" &&
-      ctx.sessionMode !== "destination"
+      ctx.sessionMode !== "destination" &&
+      ctx.sessionMode !== "final-only"
     ) {
       throw new NonRetryableError(
-        "[cron-enqueue] item-thread は sessionMode=destination と組み合わせてください",
+        "[cron-enqueue] item-thread は sessionMode=destination または final-only と組み合わせてください",
       );
     }
     return {
@@ -58,7 +59,7 @@ function resolveModes(ctx: CronEnqueueContext): {
   }
   if (ctx.deliveryMode === "item-thread") {
     throw new NonRetryableError(
-      "[cron-enqueue] item-thread は sessionMode=destination と組み合わせてください",
+      "[cron-enqueue] item-thread は sessionMode=destination または final-only と組み合わせてください",
     );
   }
   if (ctx.mode === "to-thread") {
@@ -125,6 +126,7 @@ async function validateConfigOverride(ctx: CronEnqueueContext): Promise<void> {
 async function registerCronItemThread(
   ctx: CronEnqueueContext,
   content: string,
+  sessionMode: CronSessionMode,
 ): Promise<void> {
   if (!ctx.groupName || !ctx.channelId) {
     throw new NonRetryableError(
@@ -147,7 +149,7 @@ async function registerCronItemThread(
     content,
     timestamp: new Date().toISOString(),
     cronDeliveryMode: "item-thread",
-    cronSessionMode: "destination",
+    cronSessionMode: sessionMode,
     ...(ctx.noReply ? { cronNoReply: true } : {}),
     cronThread: true,
     cronJobId: ctx.id,
@@ -180,7 +182,7 @@ export async function enqueueCronInbox(
 
   const { deliveryMode, sessionMode } = resolveModes(ctx);
   if (deliveryMode === "item-thread") {
-    await registerCronItemThread(ctx, content);
+    await registerCronItemThread(ctx, content, sessionMode);
     return;
   }
 

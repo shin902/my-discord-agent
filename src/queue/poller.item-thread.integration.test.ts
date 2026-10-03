@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   afterAll,
   afterEach,
@@ -10,6 +11,8 @@ import {
   it,
   vi,
 } from "vitest";
+import type { SendMessageOptions } from "../agent/manager.js";
+import { expectDefined } from "../test-utils.js";
 
 const state = vi.hoisted(() => ({
   repository: undefined as unknown,
@@ -68,6 +71,7 @@ afterAll(async () => {
 });
 
 const { sendMessage } = await import("../agent/manager.js");
+const { appendMessage, loadMessages } = await import("../agent/session.js");
 const { openRuntimeDb, QueueRepository } = await import("./repository.js");
 const { processMessage } = await import("./poller.js");
 const { registerRssSource } = await import("../features/rss.js");
@@ -84,6 +88,161 @@ describe("declarative item-thread poller integration", () => {
   afterEach(() => {
     (state.repository as InstanceType<typeof QueueRepository>).close();
     state.repository = undefined;
+  });
+
+  it.each([
+    ["new-thread", "final-only"],
+    ["item-thread", "final-only"],
+    ["new-thread", "destination"],
+    ["item-thread", "destination"],
+  ] as const)("passes the selected history to a %s/%s retry without changing raw entries", async (deliveryMode, sessionMode) => {
+    const repository = state.repository as InstanceType<typeof QueueRepository>;
+    const initialSessionId = `${deliveryMode}-${sessionMode}-temporary`;
+    const sessionId =
+      deliveryMode === "new-thread"
+        ? `${deliveryMode}-${sessionMode}-thread`
+        : initialSessionId;
+    const final = {
+      role: "assistant",
+      content: [{ type: "text", text: "previous public final" }],
+      stopReason: "stop",
+      timestamp: 1,
+    } as AgentMessage;
+    const userEntryId = await appendMessage(
+      "group",
+      sessionId,
+      {
+        role: "user",
+        content: "previous input",
+        timestamp: 1,
+      },
+      "main",
+    );
+    const assistantEntryId = await appendMessage(
+      "group",
+      sessionId,
+      final,
+      "main",
+    );
+    repository.enqueue({
+      groupName: "group",
+      channelId: "parent-channel",
+      sessionId,
+      content: "previous input",
+      timestamp: new Date().toISOString(),
+    });
+    const prior = expectDefined(repository.claim("seed"));
+    repository.commitResult(
+      prior.job.id,
+      prior.fencingToken,
+      "previous public final",
+      {
+        conversation: { userEntryId, assistantEntryId },
+      },
+    );
+
+    const create = vi.fn().mockResolvedValue({ id: sessionId });
+    state.client.channels.fetch.mockResolvedValue({ threads: { create } });
+    const item = repository.enqueue({
+      channelId: "parent-channel",
+      groupName: "group",
+      sessionId: initialSessionId,
+      content: "current input",
+      timestamp: new Date().toISOString(),
+      cronDeliveryMode: deliveryMode,
+      cronSessionMode: sessionMode,
+      cronJobId: "history-retry",
+      ...(deliveryMode === "item-thread" ? { cronProvisioning: true } : {}),
+    }).job;
+    vi.mocked(sendMessage).mockImplementationOnce(
+      async (group, target, _content, options) => {
+        await options.onContainerStarted?.();
+        await appendMessage(
+          group,
+          target,
+          {
+            role: "user",
+            content: "failed attempt input",
+            timestamp: 2,
+          },
+          "main",
+        );
+        await appendMessage(
+          group,
+          target,
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "failed attempt progress" }],
+            stopReason: "stop",
+            timestamp: 2,
+          } as AgentMessage,
+          "main",
+        );
+        await appendMessage(
+          group,
+          target,
+          {
+            role: "toolResult",
+            toolCallId: "call",
+            toolName: "read",
+            content: [{ type: "text", text: "failed attempt tool trace" }],
+            isError: false,
+            timestamp: 2,
+          },
+          "main",
+        );
+        throw new Error("injected attempt failure");
+      },
+    );
+    const first = expectDefined(repository.claim("poller"));
+    await processMessage(first.job);
+    const retrying = expectDefined(repository.get(item.id));
+    expect(retrying.status).toBe("retry_wait");
+    const rawBeforeRetry = await loadMessages("group", sessionId, "main");
+    expect(rawBeforeRetry).toContainEqual(
+      expect.objectContaining({
+        role: "toolResult",
+      }),
+    );
+    expect([...repository.readCommittedConversations("group")]).toEqual([
+      { userEntryId, assistantEntryId },
+    ]);
+
+    vi.mocked(sendMessage).mockImplementationOnce(
+      async (_group, _target, _content, options) => {
+        await options.onContainerStarted?.();
+        return "retry final";
+      },
+    );
+    const second = expectDefined(
+      repository.claim(
+        "poller",
+        60_000,
+        new Date(expectDefined(retrying.nextAttemptAt)),
+      ),
+    );
+    await processMessage(second.job);
+    expect(repository.get(item.id)?.status).toBe("completed");
+    expect(sendMessage).toHaveBeenLastCalledWith(
+      "group",
+      sessionId,
+      "current input",
+      expect.objectContaining({ agentId: "main" }),
+    );
+    const options = vi.mocked(sendMessage).mock
+      .calls[1][3] as SendMessageOptions;
+    expect(options.historyMessages).toEqual(
+      sessionMode === "final-only" ? [final] : undefined,
+    );
+    expect(await loadMessages("group", sessionId, "main")).toEqual(
+      rawBeforeRetry,
+    );
+    if (deliveryMode === "new-thread") {
+      expect(create).toHaveBeenCalledOnce();
+      expect(second.job.cronThreadId).toBe(sessionId);
+    } else {
+      expect(create).not.toHaveBeenCalled();
+    }
   });
 
   it("persists an empty item-thread response as terminal failure without Discord mutation", async () => {
