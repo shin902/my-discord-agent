@@ -27,7 +27,7 @@ RuntimeにHTTP入口・待受port・service tokenはありません。Credential
 | calendar | list-calendars、list-events、read-event、create-event、update-event、delete-event |
 | weather | get-current-weather、get-weather-forecast |
 
-`toolSets` は上表の名前を明示指定します。未知名や `"*"` は設定エラーです。未指定なら親を継承し、`[]` はbundle許可を解除します（native `tools` の権限は別です）。一方、`skills: "*"` は配置済みSkillをすべて公開しますが、capabilityは付与しません。`skills: ["*"]` は配列内の通常のSkill名として扱われ、全選択の意味はありません。
+`toolSets` は上表の名前を明示指定します。未知名や `"*"` は設定エラーです。未指定なら親を継承し、`[]` はbundle許可を解除します（native `tools` の権限は別です）。一方、`skills: "*"` は配置済みSkillをすべて公開しますが、capabilityは付与しません。`skills: ["*"]` は無効です。group初期化時に各配列要素をgroup内へコピーするSkill名として検証し、`*` は許可された名前形式ではないため起動エラーになります。
 
 `skills: ["github"], toolSets: []` だけではGitHub capabilityは許可されません。逆に `skills: [], toolSets: ["github"]` はcapabilityだけを許可し、Skill説明をpromptへ追加しません。promptへ載せるSkill一覧は明示指定された配置済みのものだけです。native schemaは `tools` で選択したものだけを提示し、`/skill` / `./command` の選択チェックも維持します。bashは自動付与しません。
 
