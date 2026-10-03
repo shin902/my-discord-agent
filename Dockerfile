@@ -1,5 +1,6 @@
 FROM node:22-alpine
 
+ARG ANYDOC_VERSION=0.2.4
 ARG MNEMON_VERSION=0.2.8
 ARG MNEMON_SHA256_AMD64=0ba89bed5fc55b405f8f923d9f942b9f0cb97bc1a253df24b61b342166589e54
 ARG MNEMON_SHA256_ARM64=54f6d5adc205a90f756e348fe1f439dbc961e4886b6f56fa9f0a80db614559ef
@@ -35,6 +36,9 @@ RUN set -eux; \
     chmod 755 /usr/local/bin/mnemon; \
     test "$(/usr/local/bin/mnemon --version)" = "mnemon version ${MNEMON_VERSION}"; \
     rm "/tmp/${archive}"
+
+RUN npm install --global "@firecrawl/anydoc@${ANYDOC_VERSION}" && \
+    npm cache clean --force
 
 WORKDIR /app
 
