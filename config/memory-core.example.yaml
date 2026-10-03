@@ -9,7 +9,8 @@ data:
   baseDir: /data/tdai-memory
 
 llm:
-  # Compose overrides this from TDAI_LLM_API_BASE_URL; direct OpenAI is the default.
+  # baseUrl / model / maxTokens / timeoutMs are edited here only; Compose injects
+  # the API key from .env so the secret never lands in this file.
   baseUrl: "https://api.openai.com/v1"
   apiKey: "${TDAI_LLM_API_KEY}"
   model: "gpt-4o-mini"

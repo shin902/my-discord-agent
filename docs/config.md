@@ -44,26 +44,38 @@ Memory backendごとに `handler: "jobs/memory-export.ts"` を持つjobを定義
 
 `compose.memory-core.yaml`はMemoryCore単体を公式imageから起動します。TencentDB Agent Memoryのstable release `v2.0.1`（2026-08-25）に含まれる`/v3/memory-prompt/*`契約をcustom prompt provisioningの根拠とし、そのAPIとの互換性をsmoke確認した公式MemoryCore image `agentmemory/memory-core:1.0.1`をmanifest digestまで固定しています。開発branchや独自forkには依存しません。Memory Hub / Memory ProxyやTencentDB repositoryのclone、自前buildは不要です。ホストのCLIProxyAPIが`127.0.0.1:8317`で待ち受けるため、MemoryCoreはhost networkで起動します。MemoryCore自身のGatewayは`127.0.0.1`にbindし、ホスト外部へ公開しません。MemoryCoreのデータはDocker volume `memory-core-data`へ永続化されます。
 
-exampleをGit管理外の実設定へコピーします。exampleは、直接OpenAIなどのOpenAI-compatible providerを使う汎用構成です。Composeは`.env`の`TDAI_LLM_API_BASE_URL`をMemoryCoreが認識する`TDAI_LLM_BASE_URL`へ渡し、未設定時は`https://api.openai.com/v1`を使います。`MEMORY_CORE_LLM_API_KEY`は選択したproviderのAPI keyとして`TDAI_LLM_API_KEY`へ渡します。API key自体は追跡対象外のYAMLへ書きません。
+exampleをGit管理外の実設定へコピーします。`llm.baseUrl` / `llm.model` / `llm.maxTokens` / `llm.timeoutMs` は`config/memory-core.yaml`だけを編集します。Composeは`.env`の`MEMORY_CORE_LLM_API_KEY`を`TDAI_LLM_API_KEY`へ渡します。API key自体は追跡対象外のYAMLへ書きません。
 
-ホスト上のCLIProxyAPIを使う場合だけ、`.env`の`TDAI_LLM_API_BASE_URL`を`http://127.0.0.1:8317/v1`へ変更します。ComposeがMemoryCoreの`TDAI_LLM_BASE_URL`へ変換して渡し、`network_mode: host`によりMemoryCore内の`127.0.0.1`はホストのCLIProxyAPIを指します。CLIProxyAPIにはMemoryCore専用のAPI keyを追加し、その同じ値を`.env`の`MEMORY_CORE_LLM_API_KEY`へ設定してください。既存の`CLIPROXY_API_KEY`を流用する必要はありません。`llm.model`にはCLIProxyAPIが提供する任意のmodel IDを設定してください（`/v1/models`で確認できます）。CLIProxyAPIを使わない場合は、`TDAI_LLM_API_BASE_URL`の変更は不要です。詳細は[CLIProxyAPIのAPI key設定](guides/codex-oauth-cliproxyapi.md#configyaml-の設定)を参照してください。
+ホスト上のCLIProxyAPIを使う場合は、`config/memory-core.yaml`の`llm.baseUrl`を`http://127.0.0.1:8317/v1`へ変更します。`network_mode: host`によりMemoryCore内の`127.0.0.1`はホストのCLIProxyAPIを指します。CLIProxyAPIにはMemoryCore専用のAPI keyを追加し、その同じ値を`.env`の`MEMORY_CORE_LLM_API_KEY`へ設定してください。既存の`CLIPROXY_API_KEY`を流用する必要はありません。`llm.model`にはCLIProxyAPIが提供する任意のmodel IDを設定してください（`/v1/models`で確認できます）。詳細は[CLIProxyAPIのAPI key設定](guides/codex-oauth-cliproxyapi.md#configyaml-の設定)を参照してください。
 
 ```bash
 cp config/memory-core.example.yaml config/memory-core.yaml
 ```
 
-直接providerを使う場合（`TDAI_LLM_API_BASE_URL`の初期値）:
+`.env`にはAPI keyだけを書きます。
 
 ```env
-TDAI_LLM_API_BASE_URL=https://api.openai.com/v1
 MEMORY_CORE_LLM_API_KEY=<provider-api-key>
 ```
 
-CLIProxyAPIを使う場合は、`TDAI_LLM_API_BASE_URL`を変更し、`llm.model`へCLIProxyAPIが提供する任意のmodel IDを設定します。
+直接providerを使う場合の`config/memory-core.yaml`:
+
+```yaml
+llm:
+  baseUrl: "https://api.openai.com/v1"
+  model: "gpt-4o-mini"
+```
+
+CLIProxyAPIを使う場合は`llm.baseUrl`を`http://127.0.0.1:8317/v1`へ変更し、`llm.model`へCLIProxyAPIが提供する任意のmodel IDを設定します。
 
 ```env
-TDAI_LLM_API_BASE_URL=http://127.0.0.1:8317/v1
 MEMORY_CORE_LLM_API_KEY=<memory-core-dedicated-key>
+```
+
+```yaml
+llm:
+  baseUrl: "http://127.0.0.1:8317/v1"
+  model: "<cliproxy-model-id>"
 ```
 
 CLIProxyAPI側の`api-keys`へ`<memory-core-dedicated-key>`を追加します。既存の`CLIPROXY_API_KEY`とは分けて管理します。

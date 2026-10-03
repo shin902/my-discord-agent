@@ -14,9 +14,8 @@ services:
       TDAI_GATEWAY_HOST: 127.0.0.1
       TDAI_GATEWAY_PORT: ${MEMORY_CORE_PORT:-8420}
       TDAI_GATEWAY_API_KEY: ${MEMORY_CORE_GATEWAY_API_KEY:-}
-      # TDAI_LLM_API_BASE_URL is the operator-facing variable; MemoryCore
-      # consumes the upstream TDAI_LLM_BASE_URL name internally.
-      TDAI_LLM_BASE_URL: ${TDAI_LLM_API_BASE_URL:-https://api.openai.com/v1}
+      # llm.baseUrl / model / maxTokens / timeoutMs come from config/memory-core.yaml.
+      # Only the upstream API key is injected from the environment.
       TDAI_LLM_API_KEY: ${MEMORY_CORE_LLM_API_KEY:?MEMORY_CORE_LLM_API_KEY is required}
       TDAI_DATA_DIR: /data/tdai-memory
     volumes:
