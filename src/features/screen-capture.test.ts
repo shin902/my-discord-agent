@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type BotRegistry, loadBotRegistry } from "../config/bots.js";
+import { findGroupByName } from "../config/groups.js";
 import {
   loadScreenCaptureDailySummaryConfig,
   loadScreenCaptureReceiverConfig,
@@ -23,6 +24,10 @@ vi.mock("../config/screen-capture.js", () => ({
   loadScreenCaptureSummaryConfig: vi.fn(),
 }));
 vi.mock("../queue/repository.js", () => ({ getQueueRepository: vi.fn() }));
+vi.mock("../config/groups.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../config/groups.js")>()),
+  findGroupByName: vi.fn(),
+}));
 // resolveBotProfile は本物を使い、registry の読み込みだけ差し替える。
 vi.mock("../config/bots.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../config/bots.js")>()),
@@ -97,6 +102,7 @@ describe("screen capture event consumer", () => {
       port: 0,
     });
     vi.mocked(loadScreenCaptureSummaryConfig).mockResolvedValue(settings);
+    vi.mocked(findGroupByName).mockResolvedValue({} as never);
   });
 
   afterEach(async () => {
