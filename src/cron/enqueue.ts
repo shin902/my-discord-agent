@@ -25,7 +25,7 @@ const TEMPLATE_SKILLS_DIR = path.join(ROOT, "templates/SKILLS");
 
 export type CronEnqueueContext = {
   id: string;
-  client: Client;
+  client?: Client;
   groupName?: string;
   botId?: string;
   channelId?: string;

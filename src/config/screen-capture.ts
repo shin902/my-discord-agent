@@ -41,3 +41,26 @@ export async function loadScreenCaptureReceiverConfig() {
     raw.screenCaptureReceiver === undefined ? {} : raw.screenCaptureReceiver,
   );
 }
+
+const DailySummaryConfigSchema = AgentConfigSchema.extend({
+  enabled: z.boolean().default(false),
+  groupName: z.string().min(1),
+  startDate: z.iso.date(),
+  prompt: z.string().trim().min(1),
+  channelId: z.string().min(1),
+  deliveryMode: z.enum(["direct", "new-thread"]).default("direct"),
+  sessionMode: z.enum(["per-run", "destination"]).default("per-run"),
+}).strict();
+
+export type ScreenCaptureDailySummaryConfig = z.infer<
+  typeof DailySummaryConfigSchema
+>;
+
+export async function loadScreenCaptureDailySummaryConfig(): Promise<
+  ScreenCaptureDailySummaryConfig | undefined
+> {
+  const raw = await loadRawConfig();
+  if (raw.screenCaptureDailySummary === undefined) return undefined;
+  const config = DailySummaryConfigSchema.parse(raw.screenCaptureDailySummary);
+  return config.enabled ? config : undefined;
+}

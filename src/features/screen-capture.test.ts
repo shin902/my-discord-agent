@@ -15,6 +15,7 @@ import { startScreenCapture } from "./screen-capture.js";
 import { summarizeScreenCaptureBatch } from "./screen-capture-summary.js";
 
 vi.mock("../config/screen-capture.js", () => ({
+  loadScreenCaptureDailySummaryConfig: vi.fn(),
   loadScreenCaptureReceiverConfig: vi.fn(),
   loadScreenCaptureSummaryConfig: vi.fn(),
 }));

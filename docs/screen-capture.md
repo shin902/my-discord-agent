@@ -108,6 +108,40 @@ capture jobは`discordOutput: "none"`により最終応答・typing・progress�
 
 完了済み画像は専用の`screen-capture-gc` cronで`completed_at`から24時間後に削除します。`accepted`の値は問わず、未完了画像は削除しません。設定例は`config/cron.example.json`にあります。
 
+## 日付境界による日次レポート
+
+`config/config.json` の `screenCaptureDailySummary` を有効にすると、翌日以降のcapture受信を契機に、対象日の画面処理がすべて完了した後で別のAgent jobをenqueueします。日付は撮影時刻のJST（`Asia/Tokyo`）です。現在時刻や受信時刻では判定しません。
+
+```json
+{
+  "screenCaptureDailySummary": {
+    "enabled": true,
+    "groupName": "logbook",
+    "startDate": "2026-10-03",
+    "prompt": "capturelog内の対象日 {{date}} の活動ログを分析して日次レポートを作成してください。",
+    "channelId": "YOUR_CHANNEL_ID",
+    "deliveryMode": "new-thread",
+    "sessionMode": "per-run",
+    "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
+    "tools": ["read"]
+  }
+}
+```
+
+- `groupName` は有効な `screenCaptureSummary` と同じgroupを指定します。
+- `startDate` はこの方式で最初にレポートを生成する日（JST、`YYYY-MM-DD`、その日を含む）です。既存cronから移行する場合、最後にレポート済みの日の翌日を指定します。既存cronの成功履歴は自動移行しません。
+- `prompt` は必須です。`{{date}}` は対象日に置換され、対象日を明示した指示も付加されます。既存promptの「昨日」は対象日に読み替えてください。
+- `channelId` は必須のDiscord出力先です。`deliveryMode` は `direct`（既定）または `new-thread`、`sessionMode` は `per-run`（既定）または `destination` で、通常cronと同じ意味です。
+- `model` / `tools` / `skills` / `contextFiles` / `mounts` などのAgent設定は日次job専用です。省略時はgroup設定を継承します。画像batchのAgent設定は継承しません。
+
+通常batchの `limit` 条件は変更しません。前日分に端数が残る場合は、後日のcaptureでfull batchが成立し、前日分まで完了するのを待ちます。翌日の画像処理が未完了でも、対象日以前のpendingがなければ日次レポートを生成できます。
+
+captureのある日だけを、`startDate`以降かつ最新受信撮影日より前の範囲で古い順に処理します。captureがない日はレポートを作りません。日次jobは一度に1日だけ投入し、Agent成功時に最後の成功日をwatermarkへ保存して、次の日を確認します。成功はAgent結果のqueue commitを意味し、Discord配送完了とは別です。失敗時はwatermarkを進めず、既存queueのretryに任せます。終端失敗後の再投入は次の新規capture、別batchの成功、またはHost再起動で行います。
+
+受信した撮影日とgroupごとのwatermarkはhost専用capture DBに保存し、画像GCでは削除しません。レポート済み日付の履歴一覧は保持しません。成功commit後に完了callbackが中断された場合は、残っているqueueの成功jobからwatermarkを復旧します。両DBを跨ぐatomic commitやexactly-onceは保証しません。既存画像は導入時に撮影日を登録しますが、導入前にGC済みの画像の日付は復元できません。watermark以前の日付のcaptureが後から届いても、レポートは再生成しません。
+
+移行時は旧 `screen-capture-daily-summary` cronを停止・削除し、旧jobの処理を終えてからこの設定を追加してHostを再起動してください。画像GCのcronは維持します。実設定は自動変更しません。
+
 ### 参考Memoryテンプレート
 
 [`templates/capturelog/`](../templates/capturelog/)に、画面活動を`capturelog/YYYY-MM/YYYY-MM-DD.md`へ統合するための参考テンプレートがあります。配下の`memory/`と`capturelog/`はAgentGroup workspaceへの配置構造をそのまま表します。まだ実運用で十分に検証された推奨設定ではないため、既存ファイルへ一括上書きせず、必要な内容を確認して取り込んでください。

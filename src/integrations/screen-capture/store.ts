@@ -38,6 +38,28 @@ export function openScreenCaptureDb(
         CHECK(accepted IS NULL OR accepted IN (0, 1));
         UPDATE screen_captures SET accepted = 1 WHERE completed_at IS NOT NULL;`);
     }
+    const hasDays = db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'screen_capture_days'",
+      )
+      .get();
+    db.transaction(() => {
+      db.exec(`CREATE TABLE IF NOT EXISTS screen_capture_days (
+        date TEXT PRIMARY KEY NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS screen_capture_daily_progress (
+        group_name TEXT PRIMARY KEY NOT NULL,
+        watermark TEXT NOT NULL
+      );
+      CREATE TRIGGER IF NOT EXISTS screen_capture_record_day
+      AFTER INSERT ON screen_captures BEGIN
+        INSERT OR IGNORE INTO screen_capture_days(date)
+        VALUES (date(NEW.received_at, '+9 hours'));
+      END;`);
+      if (!hasDays)
+        db.exec(`INSERT OR IGNORE INTO screen_capture_days(date)
+        SELECT DISTINCT date(received_at, '+9 hours') FROM screen_captures;`);
+    })();
     db.exec(`DROP INDEX IF EXISTS screen_captures_unread;
     CREATE INDEX IF NOT EXISTS screen_captures_uncompleted
       ON screen_captures(received_at, id) WHERE completed_at IS NULL;`);
