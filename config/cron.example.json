@@ -7,7 +7,7 @@
     "prompt": "未処理事項を確認して、必要な作業を進めてください。",
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "direct",
-    "sessionMode": "final-only"
+    "historyMode": "final-only"
   },
   {
     "id": "memory-tencent-main",
@@ -34,7 +34,7 @@
     "prompt": "昨日のログを分析して日次レポートを作成してください",
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "new-thread",
-    "sessionMode": "destination",
+    "historyMode": "full",
     "model": { "provider": "zai-custom", "modelId": "glm-4.7-flash" },
     "tools": ["read", "grep"],
     "contextFiles": [{ "path": "memory/CRON.md", "maxChars": 2000 }],
@@ -48,7 +48,7 @@
     "groupName": "my-group",
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "direct",
-    "sessionMode": "per-run",
+    "historyMode": "fresh",
     "handler": "jobs/mail.ts"
   },
   {
@@ -75,7 +75,7 @@
     "channelId": "YOUR_CHANNEL_ID",
     "prompt": "各記事のURLをagent-reachで取得し、日本語で要約してください",
     "deliveryMode": "direct",
-    "sessionMode": "per-run",
+    "historyMode": "fresh",
     "noReply": true,
     "handler": "jobs/rss-dispatch.ts",
     "tools": ["bash"],
@@ -161,7 +161,7 @@
     "channelId": "YOUR_CHANNEL_ID",
     "prompt": "x-savedスキルでstatusを確認してからpendingを最大20件処理してください。投稿本文だけで判断できない重要候補だけagent-reachでリンク先を確認し、確認した各項目をreviewed/keep/try/ignoreのいずれかへ必ずmarkしてください。keep/tryのうち今見る価値があるものだけ簡潔に報告し、何もなければ独立行で<NO_REPLY>と返してください。",
     "deliveryMode": "direct",
-    "sessionMode": "per-run",
+    "historyMode": "fresh",
     "noReply": true,
     "tools": ["bash", "read"],
     "skills": ["x-saved", "agent-reach"],
@@ -181,7 +181,7 @@
     "channelId": "YOUR_CHANNEL_ID",
     "prompt": "x-savedスキルを使い、keep/tryの保存項目を検索して今週あらためて見る価値が高いものを整理してください。特に未実施のtryや繰り返し現れる技術テーマを優先し、価値があるものだけ最大5件報告してください。なければ独立行で<NO_REPLY>と返してください。",
     "deliveryMode": "direct",
-    "sessionMode": "per-run",
+    "historyMode": "fresh",
     "noReply": true,
     "tools": ["bash", "read"],
     "skills": ["x-saved"],
@@ -200,7 +200,7 @@
     "prompt": "session-logsスキルを使って今日のセッションログを確認し、今日やったこと・決定事項・未解決事項を簡潔にまとめて memory/YYYY-MM-DD.md(今日の日付)に保存してください。今日記録対象のセッションが無ければファイルは作らず、その旨だけ報告してください。",
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "direct",
-    "sessionMode": "per-run"
+    "historyMode": "fresh"
   },
   {
     "id": "memory-weekly",
@@ -210,7 +210,7 @@
     "prompt": "memory/ 配下の直近7日分の YYYY-MM-DD.md と既存の MEMORY.md を読み比べ、今後も参照する価値がある情報だけを MEMORY.md に統合してください。一度きりの作業ログは反映しないこと。MEMORY.md 全体で2000字程度に収めること。",
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "direct",
-    "sessionMode": "per-run"
+    "historyMode": "fresh"
   },
   {
     "_comment": "自己成長型ペルソナ（docs/todo/issue-persona-growth.md）の日次ジョブ例。memory-daily と土台は同じだが、事実日報に加えて一人称の日記を書かせる",
@@ -221,7 +221,7 @@
     "prompt": "session-logsスキルを使って今日のセッションログを確認し、今日やったこと・決定事項・未解決事項を簡潔にまとめて memory/YYYY-MM-DD.md(今日の日付)に保存してください。今日記録対象のセッションが無ければファイルは作らず、その旨だけ報告してください。\n\nあわせて、一人称の日記を memory/diary/YYYY-MM-DD.md に書いてください。事実の要約ではなく、感想・気づき・詰まった点を含めること。チャンネルへの投稿の最後には、今日詰まった点について一言質問を添えてください（ユーザーが返信すれば翌日の日記の材料になりますが、返信が無くてもループは壊れません）。",
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "direct",
-    "sessionMode": "per-run",
+    "historyMode": "fresh",
     "model": { "provider": "YOUR_PROVIDER", "modelId": "YOUR_MODEL_ID" }
   },
   {
@@ -233,7 +233,7 @@
     "prompt": "memory/ 配下の直近7日分の YYYY-MM-DD.md と既存の MEMORY.md を読み比べ、今後も参照する価値がある情報だけを MEMORY.md に統合してください。一度きりの作業ログは反映しないこと。MEMORY.md 全体で2000字程度に収めること。失敗の記録を残す場合は「〜は使えない」という恒久ルール形式を禁止し、必ず「YYYY-MM-DD時点で〜が失敗した」という日付つきの事象形式で書くこと。\n\nあわせて、memory/diary/ 配下の直近7日分の日記を読み、繰り返し現れる傾向・口癖・感じ方のパターンを抽出して memory/SELF.md を更新してください。SELF.md は2000字以内(`wc -m`で確認)に収め、AGENTS.md のコア人格と矛盾する内容を書かないこと。",
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "direct",
-    "sessionMode": "per-run",
+    "historyMode": "fresh",
     "model": { "provider": "YOUR_PROVIDER", "modelId": "YOUR_MODEL_ID" }
   },
   {

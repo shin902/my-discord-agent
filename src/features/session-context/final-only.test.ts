@@ -149,7 +149,7 @@ it.each([
 ])("resolves queued cron policy using public references and owner %s", (agentId) => {
   expect(
     resolveSessionContext(
-      { ...input, cronJobId: "cron", cronSessionMode: "final-only" },
+      { ...input, cronJobId: "cron", cronHistoryMode: "final-only" },
       agentId,
     ),
   ).toEqual([]);
@@ -166,8 +166,9 @@ it.each([
 
 it.each([
   {},
-  { cronJobId: "cron", cronSessionMode: "destination" as const },
-])("preserves full history when the queue input has no policy (%j)", (override) => {
+  { cronJobId: "cron", cronHistoryMode: "full" as const },
+  { cronJobId: "cron", cronHistoryMode: "fresh" as const },
+])("preserves unprojected history outside final-only cron (%j)", (override) => {
   expect(
     resolveSessionContext({ ...input, ...override }, "main"),
   ).toBeUndefined();

@@ -20,7 +20,7 @@ const config: ScreenCaptureDailySummaryConfig = {
   channelId: "123",
   prompt: "capturelogの{{date}}を要約してください",
   deliveryMode: "new-thread",
-  sessionMode: "per-run",
+  historyMode: "fresh",
   tools: [],
 };
 let directory: string;
@@ -97,7 +97,7 @@ it("uses the JST capture boundary, waits for all batches, and enqueues once with
     groupName: "logbook",
     channelId: "123",
     cronDeliveryMode: "new-thread",
-    cronSessionMode: "per-run",
+    cronHistoryMode: "fresh",
     configOverride: { tools: [] },
     feature: {
       kind: "screen-capture-daily-summary",

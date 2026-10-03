@@ -51,7 +51,7 @@ describe("pre-materialized item-thread compatibility removal", () => {
         timestamp: new Date().toISOString(),
         cronJobId: "daily",
         cronDeliveryMode: "item-thread",
-        cronSessionMode: "destination",
+        cronHistoryMode: "full",
         cronThread: true,
         cronProvisioning: false,
         cronThreadId: "thread-old",

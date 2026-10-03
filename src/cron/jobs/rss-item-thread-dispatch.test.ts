@@ -86,7 +86,7 @@ describe("RSS item-thread dispatch identity", () => {
       prompt: "RSS記事を要約してください",
       channelId: "channel",
       deliveryMode: "item-thread",
-      sessionMode: "destination",
+      historyMode: "full",
       settings: { statePath },
       client: {} as CronContext["client"],
       appendInbox,
@@ -111,7 +111,7 @@ describe("RSS item-thread dispatch identity", () => {
         },
       },
       cronDeliveryMode: "item-thread",
-      cronSessionMode: "destination",
+      cronHistoryMode: "full",
       cronProvisioning: true,
     });
     expect(job?.sessionId).toMatch(/^cron-rss-dispatch-/);

@@ -125,7 +125,7 @@ describe("issue-triage handler", () => {
     expect(arg.channelId).toBe("channel-1");
     expect(arg.groupName).toBe("issue-triage");
     expect(arg.cronDeliveryMode).toBe("direct");
-    expect(arg.cronSessionMode).toBe("per-run");
+    expect(arg.cronHistoryMode).toBe("fresh");
     expect(arg.content).toContain("#1");
     expect(arg.content).toContain("テストIssue");
     expect(JSON.stringify(arg)).not.toContain("host-github-token");
@@ -141,7 +141,7 @@ describe("issue-triage handler", () => {
     );
   });
 
-  it("各Issueを独立した direct + per-run cron job として投入し、jobのAgent設定を引き継ぐ", async () => {
+  it("各Issueを独立した direct + fresh cron job として投入し、jobのAgent設定を引き継ぐ", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => [makeIssue(), makeIssue({ number: 2 })],
@@ -149,7 +149,7 @@ describe("issue-triage handler", () => {
     const { default: handler } = await import("./issue-triage.js");
     const ctx = makeCtx({
       deliveryMode: "new-thread",
-      sessionMode: "destination",
+      historyMode: "full",
       tools: [],
     });
     await handler(ctx);
@@ -162,7 +162,7 @@ describe("issue-triage handler", () => {
       expect(job).toMatchObject({
         cronJobId: ctx.id,
         cronDeliveryMode: "direct",
-        cronSessionMode: "per-run",
+        cronHistoryMode: "fresh",
         configOverride: { tools: [] },
       });
     }

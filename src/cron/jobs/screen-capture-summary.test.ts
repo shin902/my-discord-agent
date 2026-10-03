@@ -583,7 +583,7 @@ describe("screen capture queue pipeline", () => {
     expect(acquireInferenceLock).not.toHaveBeenCalled();
     expect(jobs()[0]).toMatchObject({
       discordOutput: "none",
-      cronSessionMode: "per-run",
+      cronHistoryMode: "fresh",
       channelId: "",
       feature: {
         kind: "screen-capture",

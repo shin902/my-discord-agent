@@ -83,7 +83,7 @@ export async function summarizeScreenCaptureBatch(
       groupName,
       channelId: "",
       sessionId: `screen-capture-${randomUUID()}`,
-      cronSessionMode: "per-run",
+      cronHistoryMode: "fresh",
       discordOutput: "none",
       timestamp: new Date().toISOString(),
       idempotencyKey: `screen-capture:${groupName}:${createHash("sha256").update(JSON.stringify(captureIds)).digest("hex")}`,

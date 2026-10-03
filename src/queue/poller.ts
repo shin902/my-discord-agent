@@ -620,12 +620,12 @@ function markRunningWhenContainerStarted(
 }
 
 function usesCronDestinationSession(msg: InboxMessage): boolean {
-  // Legacy cronThread payloads predate the explicit sessionMode and always
+  // Legacy cronThread payloads predate the explicit historyMode and always
   // used the created thread as their conversation identity.
   return (
-    msg.cronSessionMode === "destination" ||
-    msg.cronSessionMode === "final-only" ||
-    (msg.cronSessionMode === undefined &&
+    msg.cronHistoryMode === "full" ||
+    msg.cronHistoryMode === "final-only" ||
+    (msg.cronHistoryMode === undefined &&
       (msg.cronThread === true ||
         msg.cronDeliveryMode === "new-thread" ||
         msg.cronDeliveryMode === "item-thread"))
@@ -780,7 +780,7 @@ async function processCronThreadDelivery(
     const response = await withInferenceLock(
       lockTarget,
       async () => {
-        if (msg.cronSessionMode === "per-run") {
+        if (msg.cronHistoryMode === "fresh") {
           await markEphemeralCronSession(msg.groupName, sessionId, agentId);
         }
         const agentStartedAt = Date.now();
@@ -1140,7 +1140,7 @@ export async function processMessage(
         async () => {
           if (msg.discordOutput !== "none")
             stopTyping = startTypingLoop(msg.groupName, msg.channelId);
-          if (msg.cronSessionMode === "per-run") {
+          if (msg.cronHistoryMode === "fresh") {
             await markEphemeralCronSession(
               msg.groupName,
               msg.sessionId,

@@ -43,8 +43,8 @@ export async function loadScreenCaptureReceiverConfig() {
 }
 
 // Delivery fields must stay aligned with CronDeliveryMode because the daily
-// summary is enqueued through enqueueCronInbox. The item-thread/sessionMode
-// contract is checked at startup as well: sessionMode defaults to "per-run",
+// summary is enqueued through enqueueCronInbox. The item-thread/historyMode
+// contract is checked at startup as well: historyMode defaults to "fresh",
 // and an enqueue-time rejection would only be logged by the summary consumer.
 const DailySummaryConfigSchema = AgentConfigSchema.extend({
   enabled: z.boolean().default(false),
@@ -56,15 +56,15 @@ const DailySummaryConfigSchema = AgentConfigSchema.extend({
   deliveryMode: z
     .enum(["direct", "new-thread", "item-thread"])
     .default("direct"),
-  sessionMode: z.enum(["per-run", "destination"]).default("per-run"),
+  historyMode: z.enum(["fresh", "full"]).default("fresh"),
 })
   .strict()
   .refine(
-    ({ deliveryMode, sessionMode }) =>
-      deliveryMode !== "item-thread" || sessionMode === "destination",
+    ({ deliveryMode, historyMode }) =>
+      deliveryMode !== "item-thread" || historyMode === "full",
     {
-      path: ["sessionMode"],
-      message: "item-thread は sessionMode=destination と組み合わせてください",
+      path: ["historyMode"],
+      message: "item-thread は historyMode=full と組み合わせてください",
     },
   );
 

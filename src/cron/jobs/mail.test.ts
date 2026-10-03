@@ -35,10 +35,10 @@ function makeContext(
   appendInbox: QueueProducer = vi.fn().mockResolvedValue(undefined),
   modes: {
     deliveryMode: NonNullable<CronContext["deliveryMode"]>;
-    sessionMode: NonNullable<CronContext["sessionMode"]>;
+    historyMode: NonNullable<CronContext["historyMode"]>;
   } = {
     deliveryMode: "new-thread",
-    sessionMode: "destination",
+    historyMode: "full",
   },
 ): CronContext {
   return {
@@ -329,7 +329,7 @@ describe("mail cron queue boundary", () => {
     );
   });
 
-  it("enqueues a per-run Mail job without ACKing before delivery", async () => {
+  it("enqueues a fresh Mail job without ACKing before delivery", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(unreadResponse())
@@ -342,7 +342,7 @@ describe("mail cron queue boundary", () => {
     expect(appendInbox).toHaveBeenCalledWith(
       expect.objectContaining({
         cronDeliveryMode: "direct",
-        cronSessionMode: "per-run",
+        cronHistoryMode: "fresh",
         cronJobId: "mail",
         content: expect.stringContaining("件名: 件名"),
       }),
@@ -468,7 +468,7 @@ describe("mail cron queue boundary", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("keeps Mail per-run regardless of configured thread mode", async () => {
+  it("keeps Mail fresh regardless of configured thread mode", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(unreadResponse())
@@ -479,14 +479,14 @@ describe("mail cron queue boundary", () => {
     await handler(
       makeContext(appendInbox, {
         deliveryMode: "item-thread",
-        sessionMode: "destination",
+        historyMode: "full",
       }),
     );
 
     expect(appendInbox).toHaveBeenCalledWith(
       expect.objectContaining({
         cronDeliveryMode: "direct",
-        cronSessionMode: "per-run",
+        cronHistoryMode: "fresh",
         feature: {
           kind: "mail",
           input: { emailId: "mail-1", routeKey: "mail:from@example.com" },
@@ -618,7 +618,7 @@ describe("mail active-only dedupe", () => {
     await Promise.all([handler(ctx), handler(ctx)]);
     expect(jobs()).toHaveLength(1);
     expect(currentJob().cronDeliveryMode).toBe("direct");
-    expect(currentJob().cronSessionMode).toBe("per-run");
+    expect(currentJob().cronHistoryMode).toBe("fresh");
   });
 
   it("re-enqueues after delivery succeeds but Graph ACK fails", async () => {

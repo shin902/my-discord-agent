@@ -78,13 +78,13 @@ describe("screen capture daily summary config", () => {
         model: { provider: "google", modelId: "gemini-2.5-flash" },
         tools: ["read"],
         deliveryMode: "item-thread",
-        sessionMode: "destination",
+        historyMode: "full",
       },
     });
     await expect(loadScreenCaptureDailySummaryConfig()).resolves.toMatchObject({
       ...daily,
       botId: "screen-capture",
-      sessionMode: "destination",
+      historyMode: "full",
       deliveryMode: "item-thread",
       tools: ["read"],
       model: { provider: "google", modelId: "gemini-2.5-flash" },
@@ -100,7 +100,7 @@ describe("screen capture daily summary config", () => {
   it.each([
     { startDate: "2026-02-30" }, // SQL比較が前提とする実在するISO日付
     { channelId: "" }, // 出力先は必須
-    { deliveryMode: "item-thread" }, // default の per-run とは組めない
+    { deliveryMode: "item-thread" }, // default の fresh とは組めない
     { schedule: "0 9 * * *" }, // cron job用のフィールドは受け付けない
   ])("rejects invalid daily configuration: %j", async (override) => {
     vi.mocked(loadRawConfig).mockResolvedValue({

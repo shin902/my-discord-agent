@@ -86,7 +86,7 @@ function makeDispatchCtx(
     prompt: "RSS記事を日本語で要約してください",
     channelId: "channel-1",
     deliveryMode: "direct",
-    sessionMode: "per-run",
+    historyMode: "fresh",
     tools: ["bash"],
     skills: ["agent-reach"],
     settings: { statePath, maxItemsPerRun },

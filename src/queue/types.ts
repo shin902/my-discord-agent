@@ -2,7 +2,7 @@ import type { SessionSource } from "../agent/source.js";
 import type { AgentConfig } from "../config/groups.js";
 
 export type CronDeliveryMode = "direct" | "new-thread" | "item-thread";
-export type CronSessionMode = "per-run" | "destination" | "final-only";
+export type CronHistoryMode = "full" | "final-only" | "fresh";
 
 export interface AttachmentRef {
   url: string;
@@ -32,7 +32,7 @@ export interface InboxMessage {
   idempotencyKey?: string;
   completedAt?: string;
   cronDeliveryMode?: CronDeliveryMode;
-  cronSessionMode?: CronSessionMode;
+  cronHistoryMode?: CronHistoryMode;
   /** Add the NO_REPLY protocol instruction to this cron request's system prompt. */
   cronNoReply?: boolean;
   cronThread?: boolean;

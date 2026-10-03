@@ -232,7 +232,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
   for (const issue of targets) {
     try {
       await enqueueCronInbox(
-        { ...ctx, deliveryMode: "direct", sessionMode: "per-run" },
+        { ...ctx, deliveryMode: "direct", historyMode: "fresh" },
         buildPrompt(owner, repo, issue),
       );
       // enqueue成功直後にstateを保存することで、途中でクラッシュしても
