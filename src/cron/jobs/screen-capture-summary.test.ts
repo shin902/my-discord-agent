@@ -108,11 +108,13 @@ const agentConfig = {
   mounts: [{ host: "data", container: "/data" }],
   contextFiles: [{ path: "memory/context.md", maxChars: 1000 }],
 };
+const groupName = `screen-summary-test-${randomUUID()}`;
+const groupDirectory = path.join(process.cwd(), "groups", groupName);
 const ctx = {
   id: "screen-capture-summary",
   schedule: "5m",
   enabled: true,
-  groupName: "logbook",
+  groupName,
   handler: "jobs/screen-capture-summary.ts",
   ...agentConfig,
   settings: { visionModel, concurrency: 2, limit: 1 },
@@ -201,7 +203,7 @@ describe("screen capture queue pipeline", () => {
       { provider: "openai", baseUrl: "https://api.openai.com/v1" },
     ]);
     vi.mocked(findGroupByName).mockResolvedValue({
-      name: "logbook",
+      name: groupName,
       channels: [],
       model: memoryModel,
     });
@@ -226,6 +228,7 @@ describe("screen capture queue pipeline", () => {
     repository.close();
     vi.unstubAllEnvs();
     await rm(directory, { recursive: true, force: true });
+    await rm(groupDirectory, { recursive: true, force: true });
   });
 
   function insert(count: number, start = 0) {
@@ -310,7 +313,7 @@ describe("screen capture queue pipeline", () => {
       }
     });
     repository.enqueue({
-      groupName: "logbook",
+      groupName,
       channelId: "",
       sessionId: "normal-agent",
       content: "normal work",
@@ -333,7 +336,7 @@ describe("screen capture queue pipeline", () => {
       expect(completeSimple).not.toHaveBeenCalled();
       expect(peak).toBe(1);
       expect(sendMessage).toHaveBeenCalledWith(
-        "logbook",
+        groupName,
         "normal-agent",
         "normal work",
         expect.objectContaining({
@@ -385,7 +388,7 @@ describe("screen capture queue pipeline", () => {
     insert(2);
     vi.mocked(sendMessage).mockImplementationOnce(async (_group, sessionId) => {
       expect(markEphemeralCronSession).toHaveBeenCalledWith(
-        "logbook",
+        groupName,
         sessionId,
         "main",
       );
@@ -407,12 +410,12 @@ describe("screen capture queue pipeline", () => {
     expect(resolveModel).toHaveBeenCalledWith("openai", "gpt-4o-mini");
     expect(completeSimple).toHaveBeenCalledTimes(2);
     expect(markEphemeralCronSession).toHaveBeenCalledWith(
-      "logbook",
+      groupName,
       vi.mocked(sendMessage).mock.calls[0][1],
       "main",
     );
     expect(sendMessage).toHaveBeenCalledWith(
-      "logbook",
+      groupName,
       expect.stringMatching(/^screen-capture-/),
       expect.stringContaining("Editor work"),
       expect.objectContaining({
@@ -546,7 +549,7 @@ describe("screen capture queue pipeline", () => {
     vi.mocked(sendMessage).mockImplementation(
       async (_group, sessionId, _content, options) => {
         expect(markEphemeralCronSession).toHaveBeenCalledWith(
-          "logbook",
+          groupName,
           sessionId,
           "main",
         );
@@ -557,8 +560,7 @@ describe("screen capture queue pipeline", () => {
         expect(options?.imagePaths).toHaveLength(12);
         if (!options?.imagePaths) throw new Error("missing images");
         const directory = path.join(
-          process.cwd(),
-          "groups/logbook",
+          groupDirectory,
           path.dirname(options.imagePaths[0]).replace("/workspace/", ""),
         );
         directories.push(directory);
@@ -601,7 +603,7 @@ describe("screen capture queue pipeline", () => {
       terminalState: "succeeded",
       succeeded: true,
     });
-    expect([...repository.readCommittedConversations("logbook")]).toEqual([
+    expect([...repository.readCommittedConversations(groupName)]).toEqual([
       { userEntryId: 41, assistantEntryId: 42 },
     ]);
     expect(directories[0]).not.toBe(directories[1]);
@@ -743,9 +745,7 @@ describe("screen capture queue pipeline", () => {
     expect((await runNext()).status).toBe("retry_wait");
     expect(sendMessage).not.toHaveBeenCalled();
     expect(
-      await readdir(
-        path.join(process.cwd(), "groups/logbook/.screen-captures"),
-      ),
+      await readdir(path.join(groupDirectory, ".screen-captures")),
     ).toEqual([]);
     expect(rows().every((row) => row.completed_at === null)).toBe(true);
   });
