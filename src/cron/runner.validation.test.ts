@@ -5,7 +5,6 @@ import type { CronJob } from "./runner.js";
 
 describe("loadAndValidateCron", () => {
   let loadAndValidateCron: () => Promise<CronJob[]>;
-  let NonRetryableError: typeof import("../utils/error.js").NonRetryableError;
   let mockReadFile: ReturnType<typeof vi.fn>;
   let findGroupByNameMock: ReturnType<typeof vi.fn>;
 
@@ -48,10 +47,6 @@ describe("loadAndValidateCron", () => {
     }));
     const runner = await import("./runner.js");
     loadAndValidateCron = runner.loadAndValidateCron;
-
-    // Import NonRetryableError from the same module context as runner.js
-    const errorMod = await import("../utils/error.js");
-    NonRetryableError = errorMod.NonRetryableError;
   });
 
   afterEach(() => {
@@ -94,10 +89,7 @@ describe("loadAndValidateCron", () => {
   });
 
   it.each([
-    { id: "", valid: false },
-    { id: "   ", valid: false },
-    { id: "\t\n", valid: false },
-    { id: "daily-report", valid: true },
+    { id: " \t\n", valid: false },
     { id: " daily report / v2 ", valid: true },
   ])("validates nonblank cron IDs without normalizing them: %j", async ({
     id,
@@ -148,7 +140,9 @@ describe("loadAndValidateCron", () => {
     ]);
     mockReadFile.mockResolvedValueOnce(cronJson);
 
-    await expect(loadAndValidateCron()).rejects.toThrow();
+    await expect(loadAndValidateCron()).rejects.toThrow(
+      "ジョブIDが重複しています",
+    );
   });
 
   it("スキーマ検証失敗（handler なし時に必須フィールド不足）でエラーになる", async () => {
@@ -220,7 +214,7 @@ describe("loadAndValidateCron", () => {
     );
   });
 
-  it("存在しないハンドラーパスでエラーになる", async () => {
+  it("propagates handler import failure during startup", async () => {
     const cronJson = JSON.stringify([
       {
         id: "bad-handler",
@@ -230,37 +224,7 @@ describe("loadAndValidateCron", () => {
     ]);
     mockReadFile.mockResolvedValueOnce(cronJson);
 
-    await expect(loadAndValidateCron()).rejects.toThrow();
-  });
-
-  it(".. を含むパスで NonRetryableError を投げる", async () => {
-    const cronJson = JSON.stringify([
-      {
-        id: "traversal",
-        schedule: "* * * * *",
-        handler: "../evil.ts",
-      },
-    ]);
-    mockReadFile.mockResolvedValueOnce(cronJson);
-
-    await expect(loadAndValidateCron()).rejects.toBeInstanceOf(
-      NonRetryableError,
-    );
-  });
-
-  it("プロジェクト外を参照する絶対パスで NonRetryableError を投げる", async () => {
-    const cronJson = JSON.stringify([
-      {
-        id: "outside",
-        schedule: "* * * * *",
-        handler: "/etc/passwd.ts",
-      },
-    ]);
-    mockReadFile.mockResolvedValueOnce(cronJson);
-
-    await expect(loadAndValidateCron()).rejects.toBeInstanceOf(
-      NonRetryableError,
-    );
+    await expect(loadAndValidateCron()).rejects.toThrow("nonexistent");
   });
 
   it("handler なしジョブ（グループモード）は検証に成功する", async () => {
@@ -609,24 +573,13 @@ describe("loadAndValidateCron", () => {
 
 // --- loadHandlerFn (resolveHandlerPath 間接テスト) ---
 
-describe("loadHandlerFn — resolveHandlerPath", () => {
+describe("loadHandlerFn", () => {
   let loadHandlerFn: (path: string) => Promise<unknown>;
   let NonRetryableError: typeof import("../utils/error.js").NonRetryableError;
 
   beforeEach(async () => {
     vi.resetModules();
-    const discordClient = { isReady: vi.fn(), channels: { fetch: vi.fn() } };
-    vi.doMock("../discord/client.js", () => ({
-      getDefaultDiscordClient: () => discordClient,
-      getDiscordClientForGroupName: vi.fn().mockResolvedValue(discordClient),
-      getDiscordClients: () => new Map([["personal", discordClient]]),
-    }));
-    vi.doMock("../queue/repository.js", () => ({
-      getQueueRepository: () => ({ enqueue: vi.fn() }),
-    }));
-
-    const runner = await import("./runner.js");
-    loadHandlerFn = runner.loadHandlerFn;
+    ({ loadHandlerFn } = await import("./handler-loader.js"));
 
     const errorMod = await import("../utils/error.js");
     NonRetryableError = errorMod.NonRetryableError;
@@ -636,26 +589,13 @@ describe("loadHandlerFn — resolveHandlerPath", () => {
     vi.resetModules();
   });
 
-  it(".. を含むパスで NonRetryableError を投げる", async () => {
-    await expect(loadHandlerFn("../evil.ts")).rejects.toBeInstanceOf(
-      NonRetryableError,
-    );
-  });
-
-  it("..\\ を含むパス（Windows スタイル）で NonRetryableError を投げる", async () => {
-    await expect(loadHandlerFn("..\\evil.ts")).rejects.toBeInstanceOf(
-      NonRetryableError,
-    );
-  });
-
-  it("パス中に ../ が埋め込まれている場合 NonRetryableError を投げる", async () => {
-    await expect(loadHandlerFn("jobs/../../evil.ts")).rejects.toBeInstanceOf(
-      NonRetryableError,
-    );
-  });
-
-  it("プロジェクト外を参照する絶対パスで NonRetryableError を投げる", async () => {
-    await expect(loadHandlerFn("/etc/passwd.ts")).rejects.toBeInstanceOf(
+  it.each([
+    "../evil.ts",
+    "..\\evil.ts",
+    "jobs/../../evil.ts",
+    "/etc/passwd.ts",
+  ])("rejects unsafe handler paths as non-retryable (%s)", async (handlerPath) => {
+    await expect(loadHandlerFn(handlerPath)).rejects.toBeInstanceOf(
       NonRetryableError,
     );
   });

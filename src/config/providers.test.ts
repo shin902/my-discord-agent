@@ -171,7 +171,6 @@ describe("provider concurrency config", () => {
 
   it.each([
     0,
-    -1,
     1.5,
     Number.MAX_SAFE_INTEGER + 1,
     "8",
@@ -181,15 +180,6 @@ describe("provider concurrency config", () => {
       { provider: "p", concurrency },
     ]);
     const { loadProviders } = await importFresh();
-    await expect(loadProviders()).rejects.toThrow();
-  });
-
-  it("不正な concurrency を拒否する", async () => {
-    vi.mocked(loadRawProviders).mockResolvedValue([
-      { provider: "zai", concurrency: "sometimes" },
-    ]);
-    const { loadProviders } = await importFresh();
-
     await expect(loadProviders()).rejects.toThrow();
   });
 

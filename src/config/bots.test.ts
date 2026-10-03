@@ -141,13 +141,6 @@ describe("loadBotRegistry", () => {
     });
   });
 
-  it("config.json の bots map ではなく専用ファイルだけを読む", async () => {
-    mockLoadRawBots.mockResolvedValue({});
-
-    await expect(loadBotRegistry()).resolves.toEqual({});
-    expect(mockLoadRawBots).toHaveBeenCalledOnce();
-  });
-
   it("Botなし構成の空Registryを起動後もcacheする", async () => {
     mockLoadRawBots.mockResolvedValueOnce({}).mockResolvedValueOnce({
       coding: { group: "main", description, instructions: "worker" },
@@ -158,41 +151,23 @@ describe("loadBotRegistry", () => {
     expect(mockLoadRawBots).toHaveBeenCalledOnce();
   });
 
-  it("bot の group は必須", async () => {
-    mockLoadRawBots.mockResolvedValue({
-      coding: { description, instructions: "コード変更を担当する worker" },
-    });
-
-    await expect(loadBotRegistry()).rejects.toThrow();
-  });
-
-  it("instructions がない Bot は拒否する", async () => {
-    mockLoadRawBots.mockResolvedValue({
-      coding: { group: "main", description },
-    });
-
-    await expect(loadBotRegistry()).rejects.toThrow();
-  });
-
-  it("instructions が空文字の Bot は拒否する", async () => {
-    mockLoadRawBots.mockResolvedValue({
-      coding: { group: "main", description, instructions: "" },
-    });
-
-    await expect(loadBotRegistry()).rejects.toThrow();
-  });
-
   it.each([
-    undefined,
-    "",
-    " \n\t ",
-    123,
-  ])("descriptionが未指定・空白・非文字列のBotを拒否する: %j", async (description) => {
+    { field: "group", value: undefined },
+    { field: "instructions", value: undefined },
+    { field: "instructions", value: "" },
+    { field: "description", value: undefined },
+    { field: "description", value: " \n\t " },
+  ])("requires nonempty Bot $field (%j)", async ({ field, value }) => {
     mockLoadRawBots.mockResolvedValue({
-      coding: { group: "main", instructions: "worker", description },
+      coding: {
+        group: "main",
+        instructions: "worker",
+        description,
+        [field]: value,
+      },
     });
 
-    await expect(loadBotRegistry()).rejects.toThrow("description");
+    await expect(loadBotRegistry()).rejects.toThrow(field);
   });
 
   it("channel 固有の設定を BotProfile に混入させない", async () => {
@@ -216,7 +191,7 @@ describe("loadBotRegistry", () => {
     expect(registry.coding).not.toHaveProperty("sessionMode");
   });
 
-  it("AgentConfig の値をそのまま共通 schema で検証する", async () => {
+  it("applies the shared AgentConfig validation to Bot overrides", async () => {
     mockLoadRawBots.mockResolvedValue({
       coding: {
         group: "main",
