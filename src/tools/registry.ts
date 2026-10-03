@@ -40,6 +40,7 @@ import { listEmailsTool, readEmailTool } from "./mail.js";
 import { wrapToolOutput } from "./output.js";
 import { RUNTIME_CAPABILITIES } from "./runtime-capabilities.js";
 import { tavilySearchTool } from "./tavily.js";
+import { videoUnderstandTool } from "./video-understand.js";
 import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
 const createStaticToolFactory =
@@ -55,6 +56,7 @@ const TOOL_FACTORIES = {
   edit: createStaticToolFactory(editTool),
   glob: createStaticToolFactory(globTool),
   grep: createStaticToolFactory(grepTool),
+  "video-understand": createStaticToolFactory(videoUnderstandTool),
   "finance-record-transaction": createStaticToolFactory(
     financeTools.recordTransaction,
   ),

@@ -265,6 +265,7 @@ Agent向けの共通指示は [AGENTS.md](AGENTS.md)、タスク別の手順は 
 - [永続キュー・起動と復旧](docs/inbox-queue.md) / [保存先・データ移行](docs/storage.md)
 - [Credential設定](docs/config/credential-proxy.md) / [Credential Proxy・Tool Proxyの認証境界](docs/proxy.md)
 - [ツールとスキル](docs/agent-tools-skills.md) / [Slash Command の登録](docs/guides/discord-bot-setup.md#6-slash-command-の登録)
+- [Gemini動画理解](docs/video-understanding.md)
 - [Mac画面画像のTailscale収集・cron Activity Memory更新](docs/screen-capture.md)
 - [X saved: 収集・media archive・Tailscale Gallery](docs/x-saved.md)
 
