@@ -32,13 +32,15 @@ describe("x-saved PixAI host classification", () => {
     ).toBe("");
   });
 
-  it("rejects unknown settings before spawning", async () => {
+  it.each([
+    "python",
+    "cache",
+  ])("rejects the %s path override before spawning", async (key) => {
     await expect(
       handler({
         settings: {
           aliases: "config/x-saved-aliases.json",
-          python: "arbitrary/python",
-          cache: "arbitrary/cache",
+          [key]: "arbitrary/path",
         },
       } as CronContext),
     ).rejects.toThrow("Invalid");
