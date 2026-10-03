@@ -266,11 +266,11 @@ describe("loadGroups", () => {
     }
   });
 
-  it('skills は "*" を拒否する', async () => {
+  it('skills の "*" は全Skillの選択として受け入れる', async () => {
     const { loadGroups } = await setupRawGroups([
       { name: "chat", channels: [], skills: "*" },
     ]);
-    await expect(loadGroups()).rejects.toThrow();
+    await expect(loadGroups()).resolves.toMatchObject([{ skills: "*" }]);
   });
 
   it("エージェント設定フィールドは省略可能", async () => {

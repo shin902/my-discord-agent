@@ -119,7 +119,7 @@ Skillは同梱scriptからRunnerの共通 `tool-proxy` CLIを使い、stdout／r
 }
 ```
 
-`toolSets` は以下のtrusted bundle名だけを受け付けます。未知名と `"*"` は設定エラーです。`skills: ["*"]` も全選択として扱いません。
+`toolSets` は以下のtrusted bundle名だけを受け付けます。未知名と `"*"` は設定エラーです。`skills: "*"` は配置済みSkillをすべて公開しますがcapabilityは付与しません。`skills: ["*"]` は全選択ではなく、配列内の通常のSkill名として扱います。
 
 | Skill / toolSet | capabilities |
 |---|---|
