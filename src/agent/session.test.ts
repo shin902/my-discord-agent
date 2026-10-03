@@ -5,7 +5,7 @@ import path from "node:path";
 import { Worker } from "node:worker_threads";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 let testRoot: string;
 let root: string;
@@ -427,10 +427,59 @@ describe("SQLite session trajectory store", () => {
       reply as unknown as AgentMessage,
       "worker",
     );
-    const entryIds = [mainId, workerId, replyId, 999999];
-    expect(
-      session.readSessionEntries("two-owners", "same-id", "main", entryIds),
-    ).toEqual(new Map<number, typeof user | typeof reply>([[mainId, user]]));
+    const entryIds = [
+      mainId,
+      workerId,
+      replyId,
+      mainId,
+      ...Array.from({ length: 10000 }, (_, index) => index + 1000),
+    ];
+    const statements: Database.Statement[] = [];
+    const prepare = Database.prototype.prepare;
+    vi.spyOn(Database.prototype, "prepare").mockImplementation(function (
+      this: Database.Database,
+      sql,
+    ) {
+      const statement = prepare.call(this, sql);
+      for (const method of ["get", "all", "iterate"] as const)
+        vi.spyOn(statement, method);
+      statements.push(statement);
+      return statement;
+    });
+    let query = "";
+    try {
+      expect(
+        session.readSessionEntries("two-owners", "same-id", "main", entryIds),
+      ).toEqual(new Map<number, typeof user | typeof reply>([[mainId, user]]));
+      const executions = statements
+        .flatMap((statement) => [
+          statement.get,
+          statement.all,
+          statement.iterate,
+        ])
+        .flatMap((method) => vi.mocked(method).mock.calls);
+      expect(executions).toHaveLength(1);
+      query = statements[0].source;
+    } finally {
+      vi.restoreAllMocks();
+    }
+    const planDb = dbFor("two-owners");
+    try {
+      const plan = planDb
+        .prepare(`EXPLAIN QUERY PLAN ${query}`)
+        .all("main", "same-id", JSON.stringify(entryIds)) as Array<{
+        detail: string;
+      }>;
+      expect(
+        plan.some(
+          ({ detail }) =>
+            detail.includes("USING INDEX") &&
+            detail.includes("agent_id=? AND session_id=?"),
+        ),
+      ).toBe(true);
+    } finally {
+      planDb.close();
+    }
     expect(
       session.readSessionEntries("two-owners", "same-id", "worker", entryIds),
     ).toEqual(

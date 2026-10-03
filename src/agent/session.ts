@@ -247,16 +247,20 @@ export function readSessionEntries(
     const version = db.pragma("user_version", { simple: true }) as number;
     if (version !== SCHEMA_VERSION)
       throw new Error(`Unsupported session schema: ${version}`);
-    const lookup = db.prepare(
-      "SELECT payload_json FROM session_entries WHERE id=? AND agent_id=? AND session_id=?",
-    );
-    for (const id of entryIds) {
-      if (messages.has(id)) continue;
-      const row = lookup.get(id, agentId, sessionId) as
-        | { payload_json: string }
-        | undefined;
-      if (row) messages.set(id, parseStoredMessage(row.payload_json));
-    }
+    // JSON binds any number of IDs without SQLite's placeholder limit. The
+    // owner/session index narrows rows before membership testing the ID set.
+    const rows = db
+      .prepare(`
+      SELECT id, payload_json FROM session_entries
+      WHERE agent_id=? AND session_id=?
+        AND id IN (SELECT value FROM json_each(?))
+    `)
+      .all(agentId, sessionId, JSON.stringify([...entryIds])) as Array<{
+      id: number;
+      payload_json: string;
+    }>;
+    for (const row of rows)
+      messages.set(row.id, parseStoredMessage(row.payload_json));
     return messages;
   } finally {
     db.close();
