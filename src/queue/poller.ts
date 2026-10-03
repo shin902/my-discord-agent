@@ -624,6 +624,7 @@ function usesCronDestinationSession(msg: InboxMessage): boolean {
   // used the created thread as their conversation identity.
   return (
     msg.cronSessionMode === "destination" ||
+    msg.cronSessionMode === "final-only" ||
     (msg.cronSessionMode === undefined &&
       (msg.cronThread === true ||
         msg.cronDeliveryMode === "new-thread" ||

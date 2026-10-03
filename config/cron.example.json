@@ -7,8 +7,7 @@
     "prompt": "未処理事項を確認して、必要な作業を進めてください。",
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "direct",
-    "sessionMode": "destination",
-    "sessionContext": "final-only"
+    "sessionMode": "final-only"
   },
   {
     "id": "memory-tencent-main",

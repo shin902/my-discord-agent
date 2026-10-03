@@ -149,7 +149,7 @@ it.each([
 ])("resolves queued cron policy using public references and owner %s", (agentId) => {
   expect(
     resolveSessionContext(
-      { ...input, cronJobId: "cron", sessionContext: "final-only" },
+      { ...input, cronJobId: "cron", cronSessionMode: "final-only" },
       agentId,
     ),
   ).toEqual([]);

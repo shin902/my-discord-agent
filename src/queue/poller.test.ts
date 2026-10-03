@@ -1424,8 +1424,7 @@ describe("processMessage - allowMention", () => {
       botId,
       cronJobId: "finals",
       cronDeliveryMode: "direct",
-      cronSessionMode: "destination",
-      sessionContext: "final-only",
+      cronSessionMode: "final-only",
     });
     await processMessage(msg);
     expect(resolveSessionContext).toHaveBeenCalledExactlyOnceWith(

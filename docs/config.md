@@ -257,7 +257,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 ## config/cron.json
 
-`sessionContext: "final-only"` は `sessionMode: "destination"` のcron jobだけで指定するopt-in設定です。未指定はfull historyを維持し、`per-run` との併用は起動時に拒否します。queueに保存されたpolicyを実行時に使用します。適用範囲・旧履歴の扱いは [cronのsessionContext](spec/cron.md#sessioncontext) を参照してください。
+`sessionMode: "final-only"` はcron jobでdestinationと同じsession IDを使い、過去公開finalだけを継続contextへ渡す設定です。`per-run` / `destination` はfull historyを維持します。queueに保存されたmodeを実行時に使用します。適用範囲・旧履歴の扱いは [cronのfinal-only sessionMode](spec/cron.md#final-only-sessionmode) を参照してください。
 
 定期実行ジョブの定義。トップレベルは配列。ファイル自体が存在しない場合も cron は空扱いで起動する（空配列の場合と同じ挙動）。
 詳細は `docs/spec/cron.md` を参照。
@@ -295,14 +295,15 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `botId` | string（任意） | 同じgroupに所属するAgent Bot profile ID。未指定はMain。指定時はhandlerでもgroupName必須。宣言型jobと `enqueueCronInbox()` を使うhandlerが対象 |
 | `deliveryMode` | `direct` | `channelId` へ直接投稿する。通常チャンネルだけでなく既存スレッドのIDも指定可能 |
 | `deliveryMode` | `new-thread` | `channelId` を親として実行ごとに新しいスレッドを作成する |
-| `deliveryMode` | `item-thread` | 一時sessionでAIを実行し、応答がある場合だけ親メッセージを投稿してmessage/thread IDへsessionを昇格してから1項目用スレッドを作成する。`sessionMode` は `destination` 必須 |
+| `deliveryMode` | `item-thread` | 一時sessionでAIを実行し、応答がある場合だけ親メッセージを投稿してmessage/thread IDへsessionを昇格してから1項目用スレッドを作成する。`sessionMode` は `destination` または `final-only` 必須 |
 | `sessionMode` | `per-run` | cron実行ごとに独立したセッションIDを生成する |
 | `sessionMode` | `destination` | 実際の投稿先チャンネルまたはスレッドのIDをセッションIDにする |
+| `sessionMode` | `final-only` | `destination` と同じsession IDを使い、過去公開finalだけを継続contextへ渡す |
 | `noReply` | `true` | このcronリクエストのsystem promptへ、通知不要時に独立行 `<NO_REPLY>` を返す指示を追加する。`item-thread`でも利用可能 |
 
 独立行 `<NO_REPLY>` の応答は通常会話、および`direct`/`new-thread`/`item-thread` cronで正常完了し、Discordへ配送しない。inlineの言及は通常どおり配送する。`noReply`の既定値は`false`で、AGENTS.mdなどに同じ指示を書く場合は不要。`item-thread`はAI実行後までDiscord状態を作らないため、NO_REPLY時は親メッセージもthreadも作成しない。Mail/RSSは無配信時も処理済みとしてsourceを確定する。Mailの既読化に失敗した場合は未読のまま次回cronで再取得し、RSSの確定に失敗した場合はclaimを解放して次回cronで再取得する。`new-thread` + `destination` は既存のsession ID契約を守るためAI実行前にスレッドを作るので、NO_REPLY時は投稿のないスレッドが残る。
 
-既存スレッドへ投稿しつつ毎回セッションを分離する場合は、`channelId` にスレッドID、`deliveryMode` に `direct`、`sessionMode` に `per-run` を指定する。`item-thread` は1項目ごとの独立スレッドを使うため `destination` と組み合わせる。旧 `mode` も後方互換のため読み込めるが、新しい設定では使用しない。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` として扱われる。
+既存スレッドへ投稿しつつ毎回セッションを分離する場合は、`channelId` にスレッドID、`deliveryMode` に `direct`、`sessionMode` に `per-run` を指定する。`item-thread` は1項目ごとの独立スレッドを使うため `destination` または `final-only` と組み合わせる。旧 `mode` も後方互換のため読み込めるが、新しい設定では使用しない。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` として扱われる。
 
 `model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` を任意で指定すると、`group → Bot profile（botId指定時） → cron job` の順でそのジョブの実行時設定を解決する。cronの `channelId` は配送先だけを表し、配送先channelまたは既存threadのAgentConfig・Bot指定は継承しない。`skills` はスキル名の配列または `[]` を指定できる。指定フィールドは完全置換で、モデルオブジェクトや配列のdeep merge・暗黙加算は行わない。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。`allowMention` / `toolLogArgs` はgroup設定のみで、cron jobからは変更できない。
 

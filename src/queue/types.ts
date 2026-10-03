@@ -1,9 +1,8 @@
 import type { SessionSource } from "../agent/source.js";
 import type { AgentConfig } from "../config/groups.js";
-import type { SessionContext } from "../features/session-context/config.js";
 
 export type CronDeliveryMode = "direct" | "new-thread" | "item-thread";
-export type CronSessionMode = "per-run" | "destination";
+export type CronSessionMode = "per-run" | "destination" | "final-only";
 
 export interface AttachmentRef {
   url: string;
@@ -34,8 +33,6 @@ export interface InboxMessage {
   completedAt?: string;
   cronDeliveryMode?: CronDeliveryMode;
   cronSessionMode?: CronSessionMode;
-  /** Explicit context projection captured by the producer at enqueue time. */
-  sessionContext?: SessionContext;
   /** Add the NO_REPLY protocol instruction to this cron request's system prompt. */
   cronNoReply?: boolean;
   cronThread?: boolean;

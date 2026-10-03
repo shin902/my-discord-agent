@@ -8,7 +8,6 @@ import { pickAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import type { AgentConfig, SkillSelection } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
-import type { SessionContext } from "../features/session-context/config.js";
 import type { SourceEnvelope } from "../queue/source-handlers.js";
 import type {
   CronDeliveryMode,
@@ -32,7 +31,6 @@ export type CronEnqueueContext = {
   channelId?: string;
   deliveryMode?: CronDeliveryMode;
   sessionMode?: CronSessionMode;
-  sessionContext?: SessionContext;
   noReply?: boolean;
   mode?: "to-channel" | "to-thread";
   idempotencyKey?: string;
@@ -47,10 +45,11 @@ function resolveModes(ctx: CronEnqueueContext): {
   if (ctx.deliveryMode && ctx.sessionMode) {
     if (
       ctx.deliveryMode === "item-thread" &&
-      ctx.sessionMode !== "destination"
+      ctx.sessionMode !== "destination" &&
+      ctx.sessionMode !== "final-only"
     ) {
       throw new NonRetryableError(
-        "[cron-enqueue] item-thread は sessionMode=destination と組み合わせてください",
+        "[cron-enqueue] item-thread は sessionMode=destination または final-only と組み合わせてください",
       );
     }
     return {
@@ -60,7 +59,7 @@ function resolveModes(ctx: CronEnqueueContext): {
   }
   if (ctx.deliveryMode === "item-thread") {
     throw new NonRetryableError(
-      "[cron-enqueue] item-thread は sessionMode=destination と組み合わせてください",
+      "[cron-enqueue] item-thread は sessionMode=destination または final-only と組み合わせてください",
     );
   }
   if (ctx.mode === "to-thread") {
@@ -127,6 +126,7 @@ async function validateConfigOverride(ctx: CronEnqueueContext): Promise<void> {
 async function registerCronItemThread(
   ctx: CronEnqueueContext,
   content: string,
+  sessionMode: CronSessionMode,
 ): Promise<void> {
   if (!ctx.groupName || !ctx.channelId) {
     throw new NonRetryableError(
@@ -149,13 +149,10 @@ async function registerCronItemThread(
     content,
     timestamp: new Date().toISOString(),
     cronDeliveryMode: "item-thread",
-    cronSessionMode: "destination",
+    cronSessionMode: sessionMode,
     ...(ctx.noReply ? { cronNoReply: true } : {}),
     cronThread: true,
     cronJobId: ctx.id,
-    ...(ctx.sessionContext !== undefined
-      ? { sessionContext: ctx.sessionContext }
-      : {}),
     cronProvisioning: true,
     idempotencyKey: key,
     ...(ctx.feature ? { feature: ctx.feature } : {}),
@@ -184,13 +181,8 @@ export async function enqueueCronInbox(
   }
 
   const { deliveryMode, sessionMode } = resolveModes(ctx);
-  if (ctx.sessionContext !== undefined && sessionMode !== "destination") {
-    throw new NonRetryableError(
-      "[cron-enqueue] sessionContext は sessionMode=destination と組み合わせてください",
-    );
-  }
   if (deliveryMode === "item-thread") {
-    await registerCronItemThread(ctx, content);
+    await registerCronItemThread(ctx, content, sessionMode);
     return;
   }
 
@@ -213,9 +205,6 @@ export async function enqueueCronInbox(
     cronSessionMode: sessionMode,
     ...(ctx.noReply ? { cronNoReply: true } : {}),
     cronJobId: ctx.id,
-    ...(ctx.sessionContext !== undefined
-      ? { sessionContext: ctx.sessionContext }
-      : {}),
     ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : {}),
     ...(ctx.feature ? { feature: ctx.feature } : {}),
     ...(configOverride !== undefined ? { configOverride } : {}),

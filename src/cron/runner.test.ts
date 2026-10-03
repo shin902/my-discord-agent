@@ -326,47 +326,33 @@ describe("cronジョブの configOverride", () => {
         channelId: "ch",
         prompt: "check",
         deliveryMode,
-        sessionMode: "destination",
-        sessionContext: "final-only",
+        sessionMode: "final-only",
       },
     ];
     const { mod, appendInboxMock } = await importRunnerWithMocks(raw);
     const [job] = await mod.loadAndValidateCron();
-    expect(job.sessionContext).toBe("final-only");
+    expect(job.sessionMode).toBe("final-only");
     await mod.executeJob(job);
     expect(appendInboxMock).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         cronJobId: "finals",
-        cronSessionMode: "destination",
-        sessionContext: "final-only",
+        cronSessionMode: "final-only",
       }),
     );
     expect(appendInboxMock.mock.calls[0][0].configOverride).toBeUndefined();
   });
 
-  it.each([
-    {
-      deliveryMode: "direct",
-      sessionMode: "per-run",
-      sessionContext: "final-only",
-    },
-    { sessionContext: "final-only" },
-    { mode: "to-thread", sessionContext: "final-only" },
-    {
-      deliveryMode: "direct",
-      sessionMode: "destination",
-      sessionContext: "unknown",
-    },
-  ])("rejects unsupported cron context policy at config load (%j)", async (policy) => {
+  it("rejects an unknown sessionMode at config load", async () => {
     const { mod } = await importRunnerWithMocks([
       {
-        id: "invalid-policy",
+        id: "invalid-mode",
         schedule: "1h",
         handler: "jobs/session-cleanup.ts",
-        ...policy,
+        deliveryMode: "direct",
+        sessionMode: "unknown",
       },
     ]);
-    await expect(mod.loadAndValidateCron()).rejects.toThrow(/sessionContext/);
+    await expect(mod.loadAndValidateCron()).rejects.toThrow(/sessionMode/);
   });
 
   it('skills: "*" 付きジョブをスキーマで拒否する', async () => {
@@ -465,8 +451,6 @@ describe("cronジョブの configOverride", () => {
     expect(appendInboxMock.mock.calls[0][0]).not.toHaveProperty(
       "configOverride",
     );
-    expect(appendInboxMock.mock.calls[0][0]).not.toHaveProperty(
-      "sessionContext",
-    );
+    expect(appendInboxMock.mock.calls[0][0].cronSessionMode).toBe("per-run");
   });
 });

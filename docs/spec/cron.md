@@ -73,8 +73,7 @@ data/cron/
 | `prompt` | handler なし時必須 | string | エージェントへのプロンプト |
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
 | `deliveryMode` | handler なし時必須 | `"direct"` \| `"new-thread"` \| `"item-thread"` | Discordへの投稿方法（後述） |
-| `sessionMode` | handler なし時必須 | `"per-run"` \| `"destination"` | セッションIDの決定方法（後述） |
-| `sessionContext` | オプション | `"final-only"` | `sessionMode: "destination"` 限定。過去公開finalだけを継続contextへ渡す（後述） |
+| `sessionMode` | handler なし時必須 | `"per-run"` \| `"destination"` \| `"final-only"` | セッションIDと継続contextの決定方法（後述） |
 | `noReply` | オプション | boolean | `true`なら、このリクエストのsystem promptへ通知不要時に独立行 `<NO_REPLY>` を返す指示を追加。既定値は`false` |
 | `mode` | オプション | `"to-channel"` \| `"to-thread"` | 旧設定との後方互換用。新規設定では使用しない |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く） |
@@ -123,6 +122,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 | `deliveryMode` | `item-thread` | 一時sessionでAIを実行し、応答が存在する場合だけ親メッセージを投稿して、そのmessage IDへsessionを昇格してから1項目用スレッドを作成する |
 | `sessionMode` | `per-run` | 実行ごとに一意なセッションIDを生成する |
 | `sessionMode` | `destination` | 実際の投稿先チャンネルまたはスレッドIDをセッションIDとして使う |
+| `sessionMode` | `final-only` | `destination` と同じセッションIDを使い、過去公開finalだけを継続contextへ渡す |
 
 代表的な組み合わせ:
 
@@ -132,7 +132,9 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 | `direct` + `destination` | 投稿先単位で履歴を継続する |
 | `new-thread` + `destination` | 毎回新規スレッドを作り、その後のユーザー返信でも履歴を継続する |
 | `new-thread` + `per-run` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
-| `item-thread` + `destination` | 1項目ごとに一時sessionでAIを実行し、通常応答がある場合だけ親メッセージと独立スレッドを作り、そのthread IDへsessionを昇格する。`item-thread` は `destination` 必須 |
+| `item-thread` + `destination` | 1項目ごとに一時sessionでAIを実行し、通常応答がある場合だけ親メッセージと独立スレッドを作り、そのthread IDへsessionを昇格する。`item-thread` は `destination` または `final-only` 必須 |
+
+`direct` / `new-thread` / `item-thread` は `final-only` とも組み合わせられる。
 
 item-thread昇格・rollbackは保存済みjobのownerを維持する。同じgroup・Bot owner・投稿先を使うchannel会話とdestination cronは履歴を共有し、異なるownerの履歴は分離する。
 
@@ -140,9 +142,9 @@ item-thread昇格・rollbackは保存済みjobのownerを維持する。同じgr
 
 旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。`mail.ts` はMail専用のroute keyを付け、常に `direct` + `per-run` でenqueueする。Discord deliveryはMail専用のthread mappingを使用する。
 
-### sessionContext
+### final-only sessionMode
 
-cron jobに `"sessionMode": "destination"` と `"sessionContext": "final-only"` を明示した場合、次runのLLM contextを初期context snapshot・同じ `(group, agent_id, sessionId)` の過去runの採用済み公開final・今回の入力に絞る。未指定は従来のfull history。`per-run` との併用、sessionMode未指定、未対応の値は起動時config errorになる。
+cron jobに `"sessionMode": "final-only"` を明示した場合、次runのLLM contextを初期context snapshot・同じ `(group, agent_id, sessionId)` の過去runの採用済み公開final・今回の入力に絞る。session IDは `destination` と同じ規則を使う。`per-run` / `destination` は従来のfull historyを維持する。未対応の値は起動時config errorになる。
 
 ```json
 {
@@ -151,13 +153,12 @@ cron jobに `"sessionMode": "destination"` と `"sessionContext": "final-only"` 
   "groupName": "main",
   "channelId": "123",
   "deliveryMode": "direct",
-  "sessionMode": "destination",
-  "sessionContext": "final-only",
+  "sessionMode": "final-only",
   "prompt": "未処理のGitHub PRを確認してください"
 }
 ```
 
-Mainとjobの `botId` で選択されたBotは共通contractを使う。job設定は `enqueueCronInbox()` でqueue入力に保存し、pollerは保存済みpolicyを使う。設定変更は再起動後の新規enqueueに適用し、受付済みqueueのpolicyは変えない。channel・group・Bot profileにはこの設定を設けず、通常のDiscord入力や同期 `bot run/resume`・`/bot` Taskには継承しない。handlerがenqueue時に `per-run` を選んだ場合も、このpolicyとの併用は拒否する。既存のMail handlerは常に `per-run` を使うため対象外。
+Mainとjobの `botId` で選択されたBotは共通contractを使う。jobのsessionModeは `enqueueCronInbox()` でqueue入力に保存し、pollerは保存済みmodeを使う。設定変更は再起動後の新規enqueueに適用し、受付済みqueueのpolicyは変えない。channel・group・Bot profileにはこの設定を設けず、通常のDiscord入力や同期 `bot run/resume`・`/bot` Taskには継承しない。handlerがenqueue時に `per-run` を選んだ場合はfull historyになる。既存のMail handlerは常に `per-run` を使うため対象外。
 
 初版は採用順に過去finalを全件引き継ぎ、件数/token上限やLLMによる要約は設けない。finalは成功結果commit時のassistant entry参照で識別し、非空textの `stop` / `length` 応答だけを使う。tool call/result、途中assistant、過去user/event、skill invocation、steering instructionは自動再注入しない。system prompt・contextFiles・保存済み初回Agent Memoryなどの初期snapshotは維持し、今回のskill invocationやsteerは通常どおり届く。
 
@@ -177,7 +178,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 `CronContext` に含めるもの:
 - Discord `client`
 - `appendInbox`
-- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `deliveryMode?`, `sessionMode?`, `sessionContext?`, `noReply?`, `mode?`, `handler?`, `settings?`）を展開して渡す
+- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `deliveryMode?`, `sessionMode?`, `noReply?`, `mode?`, `handler?`, `settings?`）を展開して渡す
 
 複数項目を扱うhandlerも、各項目を `enqueueCronInbox()` で登録する。`item-thread` ジョブは投入ごとに一時sessionを作り、AIが通常応答を返した後、delivery workerが親メッセージを投稿し、そのmessage/thread IDへsession DB上のidentityとruntime identityを昇格してからthreadを作成する。item-threadのsource照合や完了ACKはcron基盤では行わず、必要ならhandler側で扱う。
 

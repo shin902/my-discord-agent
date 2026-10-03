@@ -40,9 +40,12 @@ it("carries the noReply system-prompt option without changing content", async ()
 it.each([
   ["direct", "per-run"],
   ["direct", "destination"],
+  ["direct", "final-only"],
   ["new-thread", "per-run"],
   ["new-thread", "destination"],
+  ["new-thread", "final-only"],
   ["item-thread", "destination"],
+  ["item-thread", "final-only"],
 ] as const)("carries the explicit Bot through %s/%s", async (deliveryMode, sessionMode) => {
   const appendInbox = vi.fn();
   await enqueueCronInbox(
@@ -67,7 +70,7 @@ it.each([
       cronSessionMode: sessionMode,
       configOverride: { tools: [] },
       sessionId:
-        deliveryMode === "direct" && sessionMode === "destination"
+        deliveryMode === "direct" && sessionMode !== "per-run"
           ? "channel"
           : expect.stringMatching(/^cron-job-/),
     }),
@@ -114,8 +117,7 @@ it.each([
         channelId: "channel",
         botId,
         deliveryMode: "direct",
-        sessionMode: "destination",
-        sessionContext: "final-only",
+        sessionMode: "final-only",
         appendInbox,
       },
       "prompt",
@@ -128,31 +130,11 @@ it.each([
     expect(reopened.get(jobId)).toMatchObject({
       groupName: "group",
       sessionId: "channel",
-      sessionContext: "final-only",
-      cronSessionMode: "destination",
+      cronSessionMode: "final-only",
     });
     expect(reopened.get(jobId)?.botId).toBe(botId);
   } finally {
     reopened.close();
     await rm(dir, { recursive: true, force: true });
   }
-});
-
-it("rejects a handler overriding destination to per-run before enqueue", async () => {
-  const appendInbox = vi.fn();
-  await expect(
-    enqueueCronInbox(
-      {
-        id: "job",
-        groupName: "group",
-        channelId: "channel",
-        deliveryMode: "direct",
-        sessionMode: "per-run",
-        sessionContext: "final-only",
-        appendInbox,
-      },
-      "prompt",
-    ),
-  ).rejects.toThrow(/sessionContext.*destination/);
-  expect(appendInbox).not.toHaveBeenCalled();
 });
