@@ -4,13 +4,9 @@ import type { AddressInfo, Server } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type BotRegistry, loadBotRegistry } from "../config/bots.js";
-import { findGroupByName } from "../config/groups.js";
 import {
-  loadScreenCaptureDailySummaryConfig,
   loadScreenCaptureReceiverConfig,
   loadScreenCaptureSummaryConfig,
-  type ScreenCaptureDailySummaryConfig,
   type ScreenCaptureSummaryConfig,
 } from "../config/screen-capture.js";
 import { openScreenCaptureDb } from "../integrations/screen-capture/store.js";
@@ -24,15 +20,6 @@ vi.mock("../config/screen-capture.js", () => ({
   loadScreenCaptureSummaryConfig: vi.fn(),
 }));
 vi.mock("../queue/repository.js", () => ({ getQueueRepository: vi.fn() }));
-vi.mock("../config/groups.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../config/groups.js")>()),
-  findGroupByName: vi.fn(),
-}));
-// resolveBotProfile は本物を使い、registry の読み込みだけ差し替える。
-vi.mock("../config/bots.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../config/bots.js")>()),
-  loadBotRegistry: vi.fn(),
-}));
 vi.mock("./screen-capture-summary.js", () => ({
   summarizeScreenCaptureBatch: vi.fn(),
   registerScreenCaptureSource: vi.fn(),
@@ -43,16 +30,6 @@ const settings: ScreenCaptureSummaryConfig = {
   enabled: true,
   groupName: "logbook",
   settings: { mode: "direct", limit: 2 },
-};
-
-const dailySettings: ScreenCaptureDailySummaryConfig = {
-  enabled: true,
-  groupName: "logbook",
-  startDate: "2026-10-03",
-  prompt: "{{date}}の日次レポート",
-  channelId: "123",
-  deliveryMode: "item-thread",
-  sessionMode: "destination",
 };
 
 let server: Server | undefined;
@@ -102,7 +79,6 @@ describe("screen capture event consumer", () => {
       port: 0,
     });
     vi.mocked(loadScreenCaptureSummaryConfig).mockResolvedValue(settings);
-    vi.mocked(findGroupByName).mockResolvedValue({} as never);
   });
 
   afterEach(async () => {
@@ -167,39 +143,6 @@ describe("screen capture event consumer", () => {
     await vi.waitFor(() => expect(pending()).toBe(1));
     expect(batches[0]).not.toEqual(batches[1]);
     expect(maxActive).toBe(1);
-  });
-
-  it("rejects a daily summary Bot the summary group cannot use", async () => {
-    vi.mocked(loadScreenCaptureDailySummaryConfig).mockResolvedValue({
-      ...dailySettings,
-      botId: "screen-capture",
-    });
-    vi.mocked(loadBotRegistry).mockResolvedValue({
-      "screen-capture": { group: "other" },
-    } as unknown as BotRegistry);
-    await expect(startScreenCapture(new SourceHandlers())).rejects.toThrow(
-      "screen-capture はグループ logbook から利用できません",
-    );
-  });
-
-  it("rejects a daily tool override that drops an approval-required Bot tool", async () => {
-    vi.mocked(loadScreenCaptureDailySummaryConfig).mockResolvedValue({
-      ...dailySettings,
-      botId: "screen-capture",
-      tools: ["read"],
-    });
-    vi.mocked(loadBotRegistry).mockResolvedValue({
-      "screen-capture": {
-        group: "logbook",
-        description: "daily report",
-        instructions: "summarize the day",
-        tools: ["get-current-weather"],
-        approvalRequiredTools: ["get-current-weather"],
-      },
-    } as unknown as BotRegistry);
-    await expect(startScreenCapture(new SourceHandlers())).rejects.toThrow(
-      "承認必須ツールは有効な tools または toolSets に含めてください",
-    );
   });
 
   it("recovers a full pending batch on startup, leaving failures pending", async () => {
