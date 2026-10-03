@@ -176,6 +176,26 @@ describe("screen capture event consumer", () => {
     );
   });
 
+  it("rejects a daily tool override that drops an approval-required Bot tool", async () => {
+    vi.mocked(loadScreenCaptureDailySummaryConfig).mockResolvedValue({
+      ...dailySettings,
+      botId: "screen-capture",
+      tools: ["read"],
+    });
+    vi.mocked(loadBotRegistry).mockResolvedValue({
+      "screen-capture": {
+        group: "logbook",
+        description: "daily report",
+        instructions: "summarize the day",
+        tools: ["get-current-weather"],
+        approvalRequiredTools: ["get-current-weather"],
+      },
+    } as unknown as BotRegistry);
+    await expect(startScreenCapture(new SourceHandlers())).rejects.toThrow(
+      "承認必須ツールは有効な tools または toolSets に含めてください",
+    );
+  });
+
   it("recovers a full pending batch on startup, leaving failures pending", async () => {
     const db = openScreenCaptureDb();
     for (let n = 0; n < 2; n++)

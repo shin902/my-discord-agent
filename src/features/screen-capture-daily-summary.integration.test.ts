@@ -10,7 +10,11 @@ import { getQueueRepository, QueueRepository } from "../queue/repository.js";
 import { SourceHandlers } from "../queue/source-handlers.js";
 import { startScreenCapture } from "./screen-capture.js";
 
-vi.mock("../config/config.js", () => ({ loadRawConfig: vi.fn() }));
+vi.mock("../config/config.js", () => ({
+  loadRawConfig: vi.fn(),
+  // startup の effective AgentConfig 検証は group を参照する。この test は group を設定しない。
+  loadRawGroups: vi.fn(async () => []),
+}));
 vi.mock("../queue/repository.js", async (original) => ({
   ...(await original<typeof import("../queue/repository.js")>()),
   getQueueRepository: vi.fn(),
