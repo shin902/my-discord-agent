@@ -119,7 +119,7 @@ Skillは同梱scriptからRunnerの共通 `tool-proxy` CLIを使い、stdout／r
 }
 ```
 
-`toolSets` は以下のtrusted bundle名だけを受け付けます。未知名と `"*"` は設定エラーです。`skills: "*"` は配置済みSkillをすべて公開しますがcapabilityは付与しません。`skills: ["*"]` は全選択ではなく、配列内の通常のSkill名として扱います。
+`toolSets` は以下のtrusted bundle名だけを受け付けます。未知名と `"*"` は設定エラーです。`skills: "*"` は配置済みSkillをすべて公開しますがcapabilityは付与しません。`skills: ["*"]` は無効です。配列形式の各要素はSkill名として検証され、`*` は名前形式に合わないため、group設定では起動時、channel / Bot profile overrideではAgent実行時、cron overrideではenqueue時にエラーになります。
 
 | Skill / toolSet | capabilities |
 |---|---|
