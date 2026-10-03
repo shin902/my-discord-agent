@@ -30,6 +30,20 @@ Slash command は通常メッセージの取り込み経路を通らないため
 
 ---
 
+## `sessionContext`
+
+channelに `"sessionContext": "final-only"` を明示した場合だけ、次runのLLM contextを初期context snapshot・同じ `(group, agent_id, sessionId)` の過去runの採用済みfinal・今回の入力に絞る。未指定は従来のfull history。group直下への指定や未対応の値は起動時config errorになる。
+
+```json
+{ "channelId": "123", "sessionMode": "shared", "sessionContext": "final-only" }
+```
+
+全sessionModeで利用でき、子スレッドでは親channel設定を使う。Mainとchannelの `botId` で選択されたBotは共通contractを使う。実行時の `groups.json` 設定を参照するため、変更は再起動後に既存queueにも適用する。cron・同期 `bot run/resume`・`/bot` Taskには継承しない。
+
+初版は採用順に過去finalを全件引き継ぎ、件数/token上限やLLMによる要約は設けない。finalは成功結果commit時のassistant entry参照で識別し、非空textの `stop` / `length` 応答だけを使う。tool call/result、途中assistant、過去user/event、skill invocation、steering instructionは自動再注入しない。system prompt・contextFiles・保存済み初回Agent Memoryなどの初期snapshotは維持し、今回のskill invocationやsteerは通常どおり届く。
+
+失敗・キャンセル・finalなし・採用されなかったretryは除外する。`<NO_REPLY>` / `discordOutput: "none"` など配信を抑制した結果も含めない。「公開」は配送対象の成功結果として採用された時点を意味し、Discord配送完了は待たない。raw trajectoryは削除・圧縮・書き換えず保持する。識別参照や配信可否のmetadataがない旧履歴は推測して採用しない。[保存・移行](../storage.md#session-trajectory)も参照。
+
 ## `appendUserOnly`
 
 任意boolean。未指定 / `false` は既存挙動。`true` は **`sessionMode: shared` 限定**で、`thread` / `auto-thread` / `email-mode` との併用は起動時config error。

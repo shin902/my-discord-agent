@@ -20,6 +20,10 @@ import { SourceHandlers } from "./source-handlers.js";
 import type { InboxMessage } from "./types.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
+const resolveSessionContext = vi.hoisted(() => vi.fn());
+vi.mock("../features/session-context/final-only.js", () => ({
+  resolveSessionContext,
+}));
 const loadMessages = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 vi.mock("../agent/session.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../agent/session.js")>()),
@@ -150,6 +154,7 @@ function configureCronBot(botId?: string): void {
 let tempDirs: string[] = [];
 
 beforeEach(() => {
+  resolveSessionContext.mockReset();
   vi.mocked(sendMessage).mockClear();
   acknowledgeEmail.mockClear();
   settleRssDispatch.mockClear();
@@ -1406,13 +1411,23 @@ describe("processMessage - allowMention", () => {
     ];
     const configOverride = { tools: ["read"], skills: ["session-logs"] };
 
-    await processMessage(makeMsg({ attachments, configOverride }));
+    const historyMessages: NonNullable<SendMessageOptions["historyMessages"]> =
+      [];
+    resolveSessionContext.mockReturnValue(historyMessages);
+    const msg = makeMsg({ attachments, configOverride });
+    await processMessage(msg);
+    expect(resolveSessionContext).toHaveBeenCalledExactlyOnceWith(
+      msg,
+      expect.objectContaining({ name: "g" }),
+      "main",
+    );
 
     expect(sendMessage).toHaveBeenCalledWith(
       "default",
       "ch-1",
       "hello",
       expect.objectContaining({
+        historyMessages,
         onDiscordEvent: expect.any(Function),
         attachments,
         onExecutionTiming: expect.any(Function),

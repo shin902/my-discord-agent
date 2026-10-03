@@ -7,7 +7,10 @@ import type {
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { appendMessage } from "../agent/session.js";
 import type { AgentRuntimeConfig } from "../config/groups.js";
-import { agentMemoryPrompt } from "../features/agent-memory/memory-context.js";
+import {
+  agentMemoryPrompt,
+  isInitialMemoryMessage,
+} from "../features/agent-memory/memory-context.js";
 import { loadSkills } from "../skills/loader.js";
 import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { formatSessionTimeAnchor } from "../time/context.js";
@@ -309,6 +312,12 @@ export async function initializeSessionBootstrap(
 
   return {
     messages,
+    initialMessages: messages.filter(
+      (message) =>
+        isBootstrapMessage(message) ||
+        isSessionTimeAnchorMessage(message) ||
+        isInitialMemoryMessage(message),
+    ),
     skills,
     sessionAnchorTimestamp,
     needsSystemPromptSnapshot,

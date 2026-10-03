@@ -302,6 +302,7 @@ export async function runAgentLoop(
   source?: SessionSource,
   onConversation?: (entries: ConversationEntries) => void,
   imagePaths?: string[],
+  historyMessages?: AgentMessage[],
 ): Promise<string> {
   const modelConfig = groupConfig.model;
   if (!modelConfig) {
@@ -333,7 +334,10 @@ export async function runAgentLoop(
     groupConfig,
     identity,
   );
-  const { messages } = bootstrap;
+  const messages =
+    historyMessages === undefined
+      ? bootstrap.messages
+      : [...bootstrap.initialMessages, ...historyMessages];
   const { skills } = bootstrap;
 
   // `./command スキル名` 形式のメッセージは、LLMの自律判断を待たずに
@@ -658,6 +662,19 @@ const PayloadSchema = z.object({
   content: z.string(),
   imagePaths: z.array(z.string().startsWith("/workspace/")).optional(),
   source: SessionSourceSchema.optional(),
+  historyMessages: z
+    .array(
+      z.custom<AgentMessage>(
+        (value) =>
+          typeof value === "object" &&
+          value !== null &&
+          "role" in value &&
+          ["user", "assistant", "toolResult", "custom"].includes(
+            String(value.role),
+          ),
+      ),
+    )
+    .optional(),
   groupConfig: AgentRuntimeConfigSchema,
   systemPromptSnapshotContent: z.string().optional(),
   systemPromptSnapshotPresent: z.boolean().optional(),
@@ -793,6 +810,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
           );
         },
         payload.imagePaths,
+        payload.historyMessages,
       );
     } catch (error) {
       // Initialization failures must reject pre-attach requests without

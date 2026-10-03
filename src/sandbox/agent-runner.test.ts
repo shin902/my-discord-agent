@@ -1770,7 +1770,11 @@ describe("runAgentLoop", () => {
     expect(passedMessages[0]).toMatchObject({ role: "user" });
   });
 
-  it("メッセージ履歴を Agent に引き継ぐ", async () => {
+  it.each([
+    undefined,
+    [],
+    [{ role: "user" as const, content: "projected history", timestamp: 1 }],
+  ])("Agentへcanonicalまたはprojected historyを初期contextとともに渡す (%j)", async (historyMessages) => {
     const bootstrapMsg = {
       role: "custom",
       customType: "system-prompt-snapshot",
@@ -1796,12 +1800,30 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop("test-group", "session-1", "hi", {});
+    await runAgentLoop(
+      "test-group",
+      "session-1",
+      "hi",
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      historyMessages,
+    );
 
     expect(lastAgentOptions).toEqual(
       expect.objectContaining({
         initialState: expect.objectContaining({
-          messages: history,
+          messages:
+            historyMessages === undefined
+              ? history
+              : [bootstrapMsg, ...historyMessages],
         }),
       }),
     );

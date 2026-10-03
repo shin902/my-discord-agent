@@ -5,7 +5,7 @@ import path from "node:path";
 import { Worker } from "node:worker_threads";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 let testRoot: string;
 let root: string;
@@ -421,11 +421,72 @@ describe("SQLite session trajectory store", () => {
       content: "only worker",
       timestamp: 11,
     };
-    await session.appendMessage(
+    const replyId = await session.appendMessage(
       "two-owners",
       "same-id",
       reply as unknown as AgentMessage,
       "worker",
+    );
+    const entryIds = [
+      mainId,
+      workerId,
+      replyId,
+      mainId,
+      ...Array.from({ length: 10000 }, (_, index) => index + 1000),
+    ];
+    const statements: Database.Statement[] = [];
+    const prepare = Database.prototype.prepare;
+    vi.spyOn(Database.prototype, "prepare").mockImplementation(function (
+      this: Database.Database,
+      sql,
+    ) {
+      const statement = prepare.call(this, sql);
+      for (const method of ["get", "all", "iterate"] as const)
+        vi.spyOn(statement, method);
+      statements.push(statement);
+      return statement;
+    });
+    let query = "";
+    try {
+      expect(
+        session.readSessionEntries("two-owners", "same-id", "main", entryIds),
+      ).toEqual(new Map<number, typeof user | typeof reply>([[mainId, user]]));
+      const executions = statements
+        .flatMap((statement) => [
+          statement.get,
+          statement.all,
+          statement.iterate,
+        ])
+        .flatMap((method) => vi.mocked(method).mock.calls);
+      expect(executions).toHaveLength(1);
+      query = statements[0].source;
+    } finally {
+      vi.restoreAllMocks();
+    }
+    const planDb = dbFor("two-owners");
+    try {
+      const plan = planDb
+        .prepare(`EXPLAIN QUERY PLAN ${query}`)
+        .all("main", "same-id", JSON.stringify(entryIds)) as Array<{
+        detail: string;
+      }>;
+      expect(
+        plan.some(
+          ({ detail }) =>
+            detail.includes("USING INDEX") &&
+            detail.includes("agent_id=? AND session_id=?"),
+        ),
+      ).toBe(true);
+    } finally {
+      planDb.close();
+    }
+    expect(
+      session.readSessionEntries("two-owners", "same-id", "worker", entryIds),
+    ).toEqual(
+      new Map<number, typeof user | typeof reply>([
+        [workerId, user],
+        [replyId, reply],
+      ]),
     );
     expect(await session.loadMessages("two-owners", "same-id", "main")).toEqual(
       [user],
@@ -434,6 +495,18 @@ describe("SQLite session trajectory store", () => {
       await session.loadMessages("two-owners", "same-id", "worker"),
     ).toEqual([user, reply]);
     await session.renameSession("two-owners", "same-id", "renamed", "worker");
+    expect(
+      session.readSessionEntries("two-owners", "same-id", "worker", entryIds)
+        .size,
+    ).toBe(0);
+    expect(
+      session.readSessionEntries("two-owners", "renamed", "worker", entryIds),
+    ).toEqual(
+      new Map<number, typeof user | typeof reply>([
+        [workerId, user],
+        [replyId, reply],
+      ]),
+    );
     expect(
       await session.loadMessages("two-owners", "same-id", "worker"),
     ).toEqual([]);

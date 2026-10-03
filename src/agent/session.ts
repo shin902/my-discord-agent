@@ -229,6 +229,44 @@ export function* readConversations(
   }
 }
 
+/** Exact owner/session-scoped entries; no context policy or final-response inference. */
+export function readSessionEntries(
+  groupName: string,
+  sessionId: string,
+  agentId: string,
+  entryIds: Iterable<number>,
+): Map<number, AgentMessage> {
+  validateName(groupName, "グループ名");
+  validateName(sessionId, "セッションID");
+  validateOwner(agentId);
+  const messages = new Map<number, AgentMessage>();
+  const dbPath = path.join(groupDir(groupName), DB_FILENAME);
+  if (!existsSync(dbPath)) return messages;
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    const version = db.pragma("user_version", { simple: true }) as number;
+    if (version !== SCHEMA_VERSION)
+      throw new Error(`Unsupported session schema: ${version}`);
+    // JSON binds any number of IDs without SQLite's placeholder limit. The
+    // owner/session index narrows rows before membership testing the ID set.
+    const rows = db
+      .prepare(`
+      SELECT id, payload_json FROM session_entries
+      WHERE agent_id=? AND session_id=?
+        AND id IN (SELECT value FROM json_each(?))
+    `)
+      .all(agentId, sessionId, JSON.stringify([...entryIds])) as Array<{
+      id: number;
+      payload_json: string;
+    }>;
+    for (const row of rows)
+      messages.set(row.id, parseStoredMessage(row.payload_json));
+    return messages;
+  } finally {
+    db.close();
+  }
+}
+
 /** Read-only trajectories with user input, ordered by creation time/ID then entry sequence. */
 export function* readOwnerSessions(
   groupName: string,

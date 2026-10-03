@@ -26,6 +26,7 @@ import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
+import { resolveSessionContext } from "../features/session-context/final-only.js";
 import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import { NonRetryableError } from "../utils/error.js";
 import { loadBotTaskSystemPrompt } from "./bot-task-sessions.js";
@@ -1150,6 +1151,11 @@ export async function processMessage(
               msg.content,
               {
                 agentId,
+                historyMessages: resolveSessionContext(
+                  msg,
+                  groupConfig,
+                  agentId,
+                ),
                 imagePaths: images?.imagePaths,
                 onDiscordEvent: (event) => {
                   if (msg.discordOutput === "none") return;
