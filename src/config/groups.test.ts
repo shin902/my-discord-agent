@@ -92,6 +92,45 @@ describe("loadGroups", () => {
       { bot: "personal", channels: [{ botId }] },
     ]);
   });
+  it.each([
+    "shared",
+    "thread",
+    "auto-thread",
+    "email-mode",
+  ])("allows explicit channel final-only context for %s", async (sessionMode) => {
+    const { loadGroups } = await setupRawGroups([
+      {
+        name: "group",
+        channels: [
+          { channelId: "channel", sessionMode, sessionContext: "final-only" },
+        ],
+      },
+    ]);
+    const [group] = await loadGroups();
+    expect(group.channels[0].sessionContext).toBe("final-only");
+    const { resolveAgentConfig } = await import("./agent-resolution.js");
+    expect(resolveAgentConfig(group, group.channels[0])).not.toHaveProperty(
+      "sessionContext",
+    );
+  });
+
+  it.each([
+    { name: "group", sessionContext: "final-only", channels: [] },
+    {
+      name: "group",
+      channels: [
+        {
+          channelId: "channel",
+          sessionMode: "shared",
+          sessionContext: "unknown",
+        },
+      ],
+    },
+  ])("rejects misplaced or invalid sessionContext at config load (%j)", async (raw) => {
+    const { loadGroups } = await setupRawGroups([raw]);
+    await expect(loadGroups()).rejects.toThrow();
+  });
+
   it("rejects an empty channel Bot ID", async () => {
     const { loadGroups } = await setupRawGroups([
       {

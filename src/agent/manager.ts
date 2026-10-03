@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { loadAgentTimeoutMs } from "../config/agent-config.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
 import {
@@ -608,6 +609,8 @@ export interface SendMessageOptions {
   agentId: string;
   source?: SessionSource;
   onConversation?: (entries: ConversationEntries) => void;
+  /** Undefined keeps full history; an empty array explicitly selects final-only context. */
+  sessionFinalResponses?: AssistantMessage[];
   onDiscordEvent?: (event: DiscordEvent) => void;
   attachments?: AttachmentRef[];
   /** Container-local image paths to include in the initial user message. */
@@ -805,6 +808,9 @@ export async function sendMessage(
     content: promptContent,
     ...(imagePaths?.length ? { imagePaths } : {}),
     ...(options.source ? { source: options.source } : {}),
+    ...(options.sessionFinalResponses !== undefined
+      ? { sessionFinalResponses: options.sessionFinalResponses }
+      : {}),
     groupConfig: {
       ...effectiveConfig,
       model: resolvedModel,

@@ -51,6 +51,7 @@ import {
   initializeSessionBootstrap,
   isSessionTimeAnchorMessage,
   isSystemPromptSnapshotMessage,
+  projectFinalResponseContext,
 } from "./session-bootstrap.js";
 import {
   createSteeringController,
@@ -302,6 +303,7 @@ export async function runAgentLoop(
   source?: SessionSource,
   onConversation?: (entries: ConversationEntries) => void,
   imagePaths?: string[],
+  sessionFinalResponses?: AssistantMessage[],
 ): Promise<string> {
   const modelConfig = groupConfig.model;
   if (!modelConfig) {
@@ -333,7 +335,10 @@ export async function runAgentLoop(
     groupConfig,
     identity,
   );
-  const { messages } = bootstrap;
+  const messages =
+    sessionFinalResponses === undefined
+      ? bootstrap.messages
+      : projectFinalResponseContext(bootstrap.messages, sessionFinalResponses);
   const { skills } = bootstrap;
 
   // `./command スキル名` 形式のメッセージは、LLMの自律判断を待たずに
@@ -658,6 +663,17 @@ const PayloadSchema = z.object({
   content: z.string(),
   imagePaths: z.array(z.string().startsWith("/workspace/")).optional(),
   source: SessionSourceSchema.optional(),
+  sessionFinalResponses: z
+    .array(
+      z.custom<AssistantMessage>(
+        (value) =>
+          typeof value === "object" &&
+          value !== null &&
+          "role" in value &&
+          value.role === "assistant",
+      ),
+    )
+    .optional(),
   groupConfig: AgentRuntimeConfigSchema,
   systemPromptSnapshotContent: z.string().optional(),
   systemPromptSnapshotPresent: z.boolean().optional(),
@@ -793,6 +809,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
           );
         },
         payload.imagePaths,
+        payload.sessionFinalResponses,
       );
     } catch (error) {
       // Initialization failures must reject pre-attach requests without

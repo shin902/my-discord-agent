@@ -153,6 +153,40 @@ describe("runAgentLoop", () => {
   });
 
   it.each([
+    undefined,
+    [],
+  ])("uses full history only when final-only projection is absent (%j)", async (finals) => {
+    const historical = {
+      role: "user",
+      content: "prior input",
+      timestamp: 1,
+    } as const;
+    vi.mocked(loadMessages).mockResolvedValue([historical]);
+    await runAgentLoop(
+      "test-group",
+      "session-1",
+      "current input",
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      finals,
+    );
+    const options = lastAgentOptions as {
+      initialState: { messages: unknown[] };
+    };
+    expect(options.initialState.messages.includes(historical)).toBe(
+      finals === undefined,
+    );
+  });
+
+  it.each([
     false,
     true,
   ])("persists events in order and returns the adopted IDs only after successful completion (failed run=%s)", async (failed) => {

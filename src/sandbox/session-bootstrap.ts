@@ -7,7 +7,10 @@ import type {
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { appendMessage } from "../agent/session.js";
 import type { AgentRuntimeConfig } from "../config/groups.js";
-import { agentMemoryPrompt } from "../features/agent-memory/memory-context.js";
+import {
+  agentMemoryPrompt,
+  isInitialMemoryMessage,
+} from "../features/agent-memory/memory-context.js";
 import { loadSkills } from "../skills/loader.js";
 import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { formatSessionTimeAnchor } from "../time/context.js";
@@ -165,6 +168,23 @@ export const CONTEXT_BOOTSTRAP_TYPES = new Set([
   MEMORY_BOOTSTRAP_TYPE,
   SELF_BOOTSTRAP_TYPE,
 ]);
+
+/** Keep session initialization snapshots, replacing prior run traces with adopted finals. */
+export function projectFinalResponseContext(
+  messages: AgentMessage[],
+  finals: AssistantMessage[],
+): AgentMessage[] {
+  return [
+    ...messages.filter(
+      (message) =>
+        isSystemPromptSnapshotMessage(message) ||
+        isSessionTimeAnchorMessage(message) ||
+        CONTEXT_BOOTSTRAP_TYPES.has(getCustomType(message) ?? "") ||
+        isInitialMemoryMessage(message),
+    ),
+    ...finals,
+  ];
+}
 
 export interface FrozenExecutionIdentity {
   systemPromptSnapshotContent?: string;

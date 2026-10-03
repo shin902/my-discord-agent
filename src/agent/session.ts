@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import Database from "better-sqlite3";
 import type { ConversationEntries } from "./conversation.js";
 import { type SessionSource, SessionSourceSchema } from "./source.js";
@@ -224,6 +225,65 @@ export function* readConversations(
         assistant: parseStoredMessage(row.assistant_json),
       };
     }
+  } finally {
+    db.close();
+  }
+}
+
+/** Project exact adopted finals for one owner/session, without requiring user provenance. */
+export function readSessionFinalResponses(
+  groupName: string,
+  sessionId: string,
+  agentId: string,
+  entries: Iterable<ConversationEntries>,
+): AssistantMessage[] {
+  validateName(groupName, "グループ名");
+  validateName(sessionId, "セッションID");
+  validateOwner(agentId);
+  const dbPath = path.join(groupDir(groupName), DB_FILENAME);
+  if (!existsSync(dbPath)) return [];
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    const version = db.pragma("user_version", { simple: true }) as number;
+    if (version !== SCHEMA_VERSION)
+      throw new Error(`Unsupported session schema: ${version}`);
+    const lookup = db.prepare(`
+      SELECT a.payload_json FROM session_entries u JOIN session_entries a
+        ON a.agent_id=u.agent_id AND a.session_id=u.session_id
+      WHERE u.id=? AND a.id=? AND a.agent_id=? AND a.session_id=?
+        AND u.entry_type='user' AND a.entry_type='assistant'
+    `);
+    const finals: AssistantMessage[] = [];
+    const seen = new Set<number>();
+    for (const entry of entries) {
+      if (seen.has(entry.assistantEntryId)) continue;
+      seen.add(entry.assistantEntryId);
+      const row = lookup.get(
+        entry.userEntryId,
+        entry.assistantEntryId,
+        agentId,
+        sessionId,
+      ) as { payload_json: string } | undefined;
+      if (!row) continue;
+      const message = parseStoredMessage(row.payload_json);
+      if (
+        message.role !== "assistant" ||
+        message.errorMessage ||
+        (message.stopReason !== "stop" && message.stopReason !== "length") ||
+        message.content.some((block) => block.type === "toolCall")
+      )
+        continue;
+      const content = message.content.filter((block) => block.type === "text");
+      if (
+        !content
+          .map((block) => block.text)
+          .join("")
+          .trim()
+      )
+        continue;
+      finals.push({ ...message, content });
+    }
+    return finals;
   } finally {
     db.close();
   }

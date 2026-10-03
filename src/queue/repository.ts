@@ -20,7 +20,7 @@ const ROOT = path.resolve(
   "../..",
 );
 export const DEFAULT_RUNTIME_DB_PATH = path.join(ROOT, "data/runtime.sqlite");
-export const QUEUE_SCHEMA_VERSION = 9;
+export const QUEUE_SCHEMA_VERSION = 10;
 export type JobStatus =
   | "queued"
   | "retry_wait"
@@ -613,11 +613,15 @@ function createCommittedConversationsTable(db: Database.Database): void {
       group_name TEXT NOT NULL,
       user_entry_id INTEGER NOT NULL CHECK(user_entry_id > 0),
       assistant_entry_id INTEGER NOT NULL CHECK(assistant_entry_id > user_entry_id),
-      committed_at TEXT NOT NULL
+      committed_at TEXT NOT NULL,
+      delivery_suppressed INTEGER
     );
     CREATE INDEX IF NOT EXISTS committed_conversations_group
       ON committed_conversations(group_name, id);
   `);
+  addMissingColumns(db, "committed_conversations", [
+    { name: "delivery_suppressed", ddl: "delivery_suppressed INTEGER" },
+  ]);
 }
 function createMailThreadsTable(db: Database.Database): void {
   db.exec(`
@@ -741,6 +745,13 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       db.exec(
         "CREATE INDEX IF NOT EXISTS jobs_source_kind ON jobs(source_kind)",
       );
+    },
+  },
+  {
+    version: 10,
+    summary: "retain delivery eligibility with adopted conversation references",
+    up(db) {
+      createCommittedConversationsTable(db);
     },
   },
 ];
@@ -888,10 +899,13 @@ export class QueueRepository {
   /** Paged references only; statements finish before yielding to remote I/O. */
   *readCommittedConversations(
     groupName: string,
+    options: { publicOnly?: boolean } = {},
   ): Generator<ConversationEntries> {
     const page = this.db.prepare(`
       SELECT id, user_entry_id AS userEntryId, assistant_entry_id AS assistantEntryId
-      FROM committed_conversations WHERE group_name=? AND id>? ORDER BY id LIMIT 100
+      FROM committed_conversations WHERE group_name=? AND id>?
+        ${options.publicOnly ? "AND delivery_suppressed=0" : ""}
+      ORDER BY id LIMIT 100
     `);
     let cursor = 0;
     for (;;) {
@@ -1679,8 +1693,8 @@ export class QueueRepository {
       if (conversation) {
         this.db
           .prepare(`
-          INSERT INTO committed_conversations(turn_id, group_name, user_entry_id, assistant_entry_id, committed_at)
-          VALUES (?, ?, ?, ?, ?)
+          INSERT INTO committed_conversations(turn_id, group_name, user_entry_id, assistant_entry_id, committed_at, delivery_suppressed)
+          VALUES (?, ?, ?, ?, ?, ?)
         `)
           .run(
             id,
@@ -1688,6 +1702,7 @@ export class QueueRepository {
             conversation.userEntryId,
             conversation.assistantEntryId,
             at,
+            options.suppressDelivery ? 1 : 0,
           );
       }
       let first: DeliveryRow | undefined;

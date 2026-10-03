@@ -5,7 +5,11 @@ import {
   type DiscordEvent,
   sendMessage,
 } from "../agent/manager.js";
-import { loadMessages, sessionConversationPath } from "../agent/session.js";
+import {
+  loadMessages,
+  readSessionFinalResponses,
+  sessionConversationPath,
+} from "../agent/session.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
@@ -1150,6 +1154,22 @@ export async function processMessage(
               msg.content,
               {
                 agentId,
+                sessionFinalResponses:
+                  !msg.cronJobId &&
+                  msg.routingChannelId &&
+                  groupConfig.channels.find(
+                    (channel) => channel.channelId === msg.routingChannelId,
+                  )?.sessionContext === "final-only"
+                    ? readSessionFinalResponses(
+                        msg.groupName,
+                        msg.sessionId,
+                        agentId,
+                        getQueueRepository().readCommittedConversations(
+                          msg.groupName,
+                          { publicOnly: true },
+                        ),
+                      )
+                    : undefined,
                 imagePaths: images?.imagePaths,
                 onDiscordEvent: (event) => {
                   if (msg.discordOutput === "none") return;

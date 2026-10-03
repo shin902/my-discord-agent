@@ -74,6 +74,7 @@ describe("committed conversation references", () => {
       user_entry_id: 10,
       assistant_entry_id: 20,
       committed_at: expect.any(String),
+      delivery_suppressed: 0,
     });
     expect(JSON.stringify(row)).not.toContain("private");
     expect(() =>
@@ -112,6 +113,42 @@ describe("committed conversation references", () => {
       conversation,
     ]);
     expect([...repo.readCommittedConversations("missing")]).toEqual([]);
+  });
+
+  it("keeps public eligibility after job retention and excludes suppressed and pre-migration references", () => {
+    const repo = repository();
+    const old = claim(repo);
+    repo.commitResult(old.job.id, old.fencingToken, "old result", {
+      conversation,
+    });
+    repo.db.exec(
+      "ALTER TABLE committed_conversations DROP COLUMN delivery_suppressed; UPDATE schema_meta SET value='9' WHERE key='schema_version'",
+    );
+    const reopened = new QueueRepository(repo.db);
+    const visible = claim(reopened);
+    const visibleEntries = { userEntryId: 30, assistantEntryId: 40 };
+    reopened.commitResult(
+      visible.job.id,
+      visible.fencingToken,
+      "public result",
+      { conversation: visibleEntries },
+    );
+    const suppressed = claim(reopened);
+    reopened.commitResult(
+      suppressed.job.id,
+      suppressed.fencingToken,
+      "<NO_REPLY>",
+      {
+        conversation: { userEntryId: 50, assistantEntryId: 60 },
+        suppressDelivery: true,
+      },
+    );
+    // Ordinary retention removes jobs, but does not revoke adopted references.
+    reopened.db.exec("DELETE FROM deliveries; DELETE FROM jobs");
+    expect([
+      ...reopened.readCommittedConversations("group", { publicOnly: true }),
+    ]).toEqual([visibleEntries]);
+    expect([...reopened.readCommittedConversations("group")]).toHaveLength(3);
   });
 
   it("upgrades v6 without inferring old results and preserves references on repeated initialization", () => {
