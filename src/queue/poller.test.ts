@@ -20,15 +20,14 @@ import { SourceHandlers } from "./source-handlers.js";
 import type { InboxMessage } from "./types.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
-const readSessionFinalResponses = vi.hoisted(() => vi.fn().mockReturnValue([]));
-const readCommittedConversations = vi.hoisted(() =>
-  vi.fn().mockReturnValue([]),
-);
+const resolveSessionContext = vi.hoisted(() => vi.fn());
+vi.mock("../features/session-context/final-only.js", () => ({
+  resolveSessionContext,
+}));
 const loadMessages = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 vi.mock("../agent/session.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../agent/session.js")>()),
   loadMessages,
-  readSessionFinalResponses,
 }));
 const markEphemeralCronSession = vi.hoisted(() => vi.fn());
 vi.mock("../cron/session-retention.js", () => ({ markEphemeralCronSession }));
@@ -105,7 +104,6 @@ vi.mock("./repository.js", () => ({
   getQueueRepository: () => ({
     claim,
     commitResult: commitInboxResult,
-    readCommittedConversations,
     failAttempt,
     freezeExecutionIdentity,
     heartbeat,
@@ -156,6 +154,7 @@ function configureCronBot(botId?: string): void {
 let tempDirs: string[] = [];
 
 beforeEach(() => {
+  resolveSessionContext.mockReset();
   vi.mocked(sendMessage).mockClear();
   acknowledgeEmail.mockClear();
   settleRssDispatch.mockClear();
@@ -258,103 +257,6 @@ function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
 }
 
 const EMPTY_AGENT_RESPONSES = ["", "   ", "\r\n", "\t"] as const;
-
-describe("processMessage - channel final-only context", () => {
-  afterEach(() => loadMessages.mockClear());
-  it.each([
-    {
-      mode: "final-only",
-      botId: undefined,
-      routingChannelId: "parent",
-      cronJobId: undefined,
-      enabled: true,
-    },
-    {
-      mode: "final-only",
-      botId: "coding",
-      routingChannelId: "parent",
-      cronJobId: undefined,
-      enabled: true,
-    },
-    {
-      mode: undefined,
-      botId: undefined,
-      routingChannelId: "parent",
-      cronJobId: undefined,
-      enabled: false,
-    },
-    {
-      mode: "final-only",
-      botId: undefined,
-      routingChannelId: undefined,
-      cronJobId: undefined,
-      enabled: false,
-    },
-    {
-      mode: "final-only",
-      botId: undefined,
-      routingChannelId: "parent",
-      cronJobId: "cron",
-      enabled: false,
-    },
-  ] as const)("selects projection only for explicit configured channel input (%j)", async ({
-    mode,
-    botId,
-    routingChannelId,
-    cronJobId,
-    enabled,
-  }) => {
-    vi.mocked(client.channels.fetch).mockResolvedValue(null);
-    readSessionFinalResponses.mockClear();
-    readCommittedConversations.mockClear();
-    const finals = [
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "past final" }],
-        timestamp: 1,
-      },
-    ];
-    readSessionFinalResponses.mockReturnValue(finals);
-    const references = [{ userEntryId: 1, assistantEntryId: 2 }];
-    readCommittedConversations.mockReturnValue(references);
-    vi.mocked(findGroupByName).mockResolvedValue({
-      name: "default",
-      channels: [
-        { channelId: "parent", sessionMode: "thread", sessionContext: mode },
-      ],
-    });
-    loadBotRegistry.mockResolvedValue({ coding: {} });
-    resolveBotProfile.mockReturnValue({ instructions: "Bot role", tools: [] });
-    vi.mocked(sendMessage).mockResolvedValue("current final");
-    await processMessage(
-      makeMsg({
-        channelId: "child-thread",
-        sessionId: "child-thread",
-        routingChannelId,
-        botId,
-        cronJobId,
-      }),
-    );
-    expect(sendMessage).toHaveBeenCalledOnce();
-    expect(
-      vi.mocked(sendMessage).mock.calls[0][3]?.sessionFinalResponses,
-    ).toEqual(enabled ? finals : undefined);
-    if (enabled) {
-      expect(readSessionFinalResponses).toHaveBeenCalledWith(
-        "default",
-        "child-thread",
-        botId ?? "main",
-        references,
-      );
-      expect(readCommittedConversations).toHaveBeenCalledWith("default", {
-        publicOnly: true,
-      });
-    } else {
-      expect(readSessionFinalResponses).not.toHaveBeenCalled();
-      expect(readCommittedConversations).not.toHaveBeenCalled();
-    }
-  });
-});
 
 describe("processMessage - Bot execution resolution", () => {
   beforeEach(() => {
@@ -1509,13 +1411,23 @@ describe("processMessage - allowMention", () => {
     ];
     const configOverride = { tools: ["read"], skills: ["session-logs"] };
 
-    await processMessage(makeMsg({ attachments, configOverride }));
+    const historyMessages: NonNullable<SendMessageOptions["historyMessages"]> =
+      [];
+    resolveSessionContext.mockReturnValue(historyMessages);
+    const msg = makeMsg({ attachments, configOverride });
+    await processMessage(msg);
+    expect(resolveSessionContext).toHaveBeenCalledExactlyOnceWith(
+      msg,
+      expect.objectContaining({ name: "g" }),
+      "main",
+    );
 
     expect(sendMessage).toHaveBeenCalledWith(
       "default",
       "ch-1",
       "hello",
       expect.objectContaining({
+        historyMessages,
         onDiscordEvent: expect.any(Function),
         attachments,
         onExecutionTiming: expect.any(Function),

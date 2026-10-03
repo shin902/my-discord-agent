@@ -5,11 +5,7 @@ import {
   type DiscordEvent,
   sendMessage,
 } from "../agent/manager.js";
-import {
-  loadMessages,
-  readSessionFinalResponses,
-  sessionConversationPath,
-} from "../agent/session.js";
+import { loadMessages, sessionConversationPath } from "../agent/session.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
@@ -30,6 +26,7 @@ import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
+import { resolveSessionContext } from "../features/session-context/final-only.js";
 import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import { NonRetryableError } from "../utils/error.js";
 import { loadBotTaskSystemPrompt } from "./bot-task-sessions.js";
@@ -1154,22 +1151,11 @@ export async function processMessage(
               msg.content,
               {
                 agentId,
-                sessionFinalResponses:
-                  !msg.cronJobId &&
-                  msg.routingChannelId &&
-                  groupConfig.channels.find(
-                    (channel) => channel.channelId === msg.routingChannelId,
-                  )?.sessionContext === "final-only"
-                    ? readSessionFinalResponses(
-                        msg.groupName,
-                        msg.sessionId,
-                        agentId,
-                        getQueueRepository().readCommittedConversations(
-                          msg.groupName,
-                          { publicOnly: true },
-                        ),
-                      )
-                    : undefined,
+                historyMessages: resolveSessionContext(
+                  msg,
+                  groupConfig,
+                  agentId,
+                ),
                 imagePaths: images?.imagePaths,
                 onDiscordEvent: (event) => {
                   if (msg.discordOutput === "none") return;

@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import Database from "better-sqlite3";
 import type { ConversationEntries } from "./conversation.js";
 import { type SessionSource, SessionSourceSchema } from "./source.js";
@@ -230,60 +229,35 @@ export function* readConversations(
   }
 }
 
-/** Project exact adopted finals for one owner/session, without requiring user provenance. */
-export function readSessionFinalResponses(
+/** Exact owner/session-scoped entries; no context policy or final-response inference. */
+export function readSessionEntries(
   groupName: string,
   sessionId: string,
   agentId: string,
-  entries: Iterable<ConversationEntries>,
-): AssistantMessage[] {
+  entryIds: Iterable<number>,
+): Map<number, AgentMessage> {
   validateName(groupName, "グループ名");
   validateName(sessionId, "セッションID");
   validateOwner(agentId);
+  const messages = new Map<number, AgentMessage>();
   const dbPath = path.join(groupDir(groupName), DB_FILENAME);
-  if (!existsSync(dbPath)) return [];
+  if (!existsSync(dbPath)) return messages;
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
     const version = db.pragma("user_version", { simple: true }) as number;
     if (version !== SCHEMA_VERSION)
       throw new Error(`Unsupported session schema: ${version}`);
-    const lookup = db.prepare(`
-      SELECT a.payload_json FROM session_entries u JOIN session_entries a
-        ON a.agent_id=u.agent_id AND a.session_id=u.session_id
-      WHERE u.id=? AND a.id=? AND a.agent_id=? AND a.session_id=?
-        AND u.entry_type='user' AND a.entry_type='assistant'
-    `);
-    const finals: AssistantMessage[] = [];
-    const seen = new Set<number>();
-    for (const entry of entries) {
-      if (seen.has(entry.assistantEntryId)) continue;
-      seen.add(entry.assistantEntryId);
-      const row = lookup.get(
-        entry.userEntryId,
-        entry.assistantEntryId,
-        agentId,
-        sessionId,
-      ) as { payload_json: string } | undefined;
-      if (!row) continue;
-      const message = parseStoredMessage(row.payload_json);
-      if (
-        message.role !== "assistant" ||
-        message.errorMessage ||
-        (message.stopReason !== "stop" && message.stopReason !== "length") ||
-        message.content.some((block) => block.type === "toolCall")
-      )
-        continue;
-      const content = message.content.filter((block) => block.type === "text");
-      if (
-        !content
-          .map((block) => block.text)
-          .join("")
-          .trim()
-      )
-        continue;
-      finals.push({ ...message, content });
+    const lookup = db.prepare(
+      "SELECT payload_json FROM session_entries WHERE id=? AND agent_id=? AND session_id=?",
+    );
+    for (const id of entryIds) {
+      if (messages.has(id)) continue;
+      const row = lookup.get(id, agentId, sessionId) as
+        | { payload_json: string }
+        | undefined;
+      if (row) messages.set(id, parseStoredMessage(row.payload_json));
     }
-    return finals;
+    return messages;
   } finally {
     db.close();
   }

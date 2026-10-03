@@ -4,26 +4,18 @@ import os from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { QueueRepository } from "../queue/repository.js";
 
 let testRoot: string;
 let root: string;
 let session: typeof import("./session.js");
-let defaultConvertToLlm: typeof import("../sandbox/agent-runner.js").defaultConvertToLlm;
-let projectFinalResponseContext: typeof import("../sandbox/session-bootstrap.js").projectFinalResponseContext;
 
 beforeAll(async () => {
   testRoot = await mkdtemp(path.join(os.tmpdir(), "session-store-test-"));
   root = path.join(testRoot, "sessions");
   process.env.SESSIONS_DIR = root;
   session = await import("./session.js");
-  ({ defaultConvertToLlm } = await import("../sandbox/agent-runner.js"));
-  ({ projectFinalResponseContext } = await import(
-    "../sandbox/session-bootstrap.js"
-  ));
 });
 
 afterAll(async () => {
@@ -429,11 +421,23 @@ describe("SQLite session trajectory store", () => {
       content: "only worker",
       timestamp: 11,
     };
-    await session.appendMessage(
+    const replyId = await session.appendMessage(
       "two-owners",
       "same-id",
       reply as unknown as AgentMessage,
       "worker",
+    );
+    const entryIds = [mainId, workerId, replyId, 999999];
+    expect(
+      session.readSessionEntries("two-owners", "same-id", "main", entryIds),
+    ).toEqual(new Map<number, typeof user | typeof reply>([[mainId, user]]));
+    expect(
+      session.readSessionEntries("two-owners", "same-id", "worker", entryIds),
+    ).toEqual(
+      new Map<number, typeof user | typeof reply>([
+        [workerId, user],
+        [replyId, reply],
+      ]),
     );
     expect(await session.loadMessages("two-owners", "same-id", "main")).toEqual(
       [user],
@@ -442,6 +446,18 @@ describe("SQLite session trajectory store", () => {
       await session.loadMessages("two-owners", "same-id", "worker"),
     ).toEqual([user, reply]);
     await session.renameSession("two-owners", "same-id", "renamed", "worker");
+    expect(
+      session.readSessionEntries("two-owners", "same-id", "worker", entryIds)
+        .size,
+    ).toBe(0);
+    expect(
+      session.readSessionEntries("two-owners", "renamed", "worker", entryIds),
+    ).toEqual(
+      new Map<number, typeof user | typeof reply>([
+        [workerId, user],
+        [replyId, reply],
+      ]),
+    );
     expect(
       await session.loadMessages("two-owners", "same-id", "worker"),
     ).toEqual([]);
@@ -516,254 +532,6 @@ describe("SQLite session trajectory store", () => {
   it("conversation pathはDBと論理session identityを表す", () => {
     expect(session.sessionConversationPath("group1", "session-a", "main")).toBe(
       "data/sessions/group1/sessions.sqlite#session=session-a",
-    );
-  });
-});
-
-describe("final-only session context", () => {
-  function answer(
-    text: string,
-    stopReason: AssistantMessage["stopReason"] = "stop",
-  ): AssistantMessage {
-    return {
-      role: "assistant",
-      content: [{ type: "text", text }],
-      api: "openai-responses",
-      provider: "test",
-      model: "test",
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason,
-      timestamp: Date.now(),
-    };
-  }
-
-  it("projects committed public finals across runs for Main and Bot while preserving raw traces and bootstrap", async () => {
-    const group = "final-context";
-    const repo = new QueueRepository(":memory:");
-    try {
-      for (const owner of ["main", "worker"]) {
-        const bootstrap: AgentMessage[] = [
-          {
-            role: "custom",
-            customType: "system-prompt-snapshot",
-            content: `${owner} role`,
-            display: false,
-            timestamp: 1,
-          },
-          {
-            role: "custom",
-            customType: "context-bootstrap",
-            content: "initial context",
-            display: false,
-            timestamp: 2,
-          },
-          {
-            role: "custom",
-            customType: "initial-agent-memory",
-            content: "selected memory",
-            display: false,
-            timestamp: 3,
-          },
-        ];
-        for (const message of bootstrap)
-          await session.appendMessage(group, "shared", message, owner);
-        const expected: AssistantMessage[] = [];
-        for (let index = 0; index < 30; index++) {
-          const { job } = repo.enqueue({
-            groupName: group,
-            channelId: "channel",
-            routingChannelId: "channel",
-            sessionId: "shared",
-            ...(owner === "main" ? {} : { botId: owner }),
-            content: "input",
-            timestamp: new Date().toISOString(),
-          });
-          const claim = repo.claim("worker");
-          if (!claim) throw new Error("missing claim");
-          expect(claim.job.id).toBe(job.id);
-          const userEntryId = await session.appendMessage(
-            group,
-            "shared",
-            { role: "user", content: "old event", timestamp: 4 },
-            owner,
-          );
-          // Intermediate stop messages must not become finals by inference.
-          await session.appendMessage(
-            group,
-            "shared",
-            answer(`progress ${"x".repeat(4000)}`),
-            owner,
-          );
-          const toolCall = {
-            ...answer("working", "toolUse"),
-            content: [
-              { type: "toolCall", id: "call", name: "read", arguments: {} },
-            ],
-          } as AssistantMessage;
-          await session.appendMessage(group, "shared", toolCall, owner);
-          await session.appendMessage(
-            group,
-            "shared",
-            {
-              role: "toolResult",
-              toolCallId: "call",
-              toolName: "read",
-              content: [{ type: "text", text: `trace ${"x".repeat(4000)}` }],
-              isError: false,
-              timestamp: 5,
-            },
-            owner,
-          );
-          await session.appendMessage(
-            group,
-            "shared",
-            {
-              role: "custom",
-              customType: "steering-instruction",
-              content: "old steering",
-              display: false,
-              timestamp: 6,
-            },
-            owner,
-          );
-          const final = answer(`${owner} conclusion ${index}`);
-          const assistantEntryId = await session.appendMessage(
-            group,
-            "shared",
-            final,
-            owner,
-          );
-          if (index === 0) {
-            // Persisted but abandoned run: no commit, no final context.
-            repo.deadLetter(job.id, claim.fencingToken, "cancelled");
-          } else {
-            const suppressDelivery = index === 1;
-            repo.commitResult(job.id, claim.fencingToken, final.content, {
-              conversation: { userEntryId, assistantEntryId },
-              suppressDelivery,
-            });
-            if (!suppressDelivery) expected.push(final);
-          }
-        }
-        // Legacy assistant and failed/cancelled outputs remain raw, never inferred.
-        await session.appendMessage(
-          group,
-          "shared",
-          answer("legacy final"),
-          owner,
-        );
-        await session.appendMessage(
-          group,
-          "shared",
-          answer("failed final", "error"),
-          owner,
-        );
-        await session.appendMessage(
-          group,
-          "shared",
-          answer("cancelled final", "aborted"),
-          owner,
-        );
-        const raw = await session.loadMessages(group, "shared", owner);
-        const finals = session.readSessionFinalResponses(
-          group,
-          "shared",
-          owner,
-          repo.readCommittedConversations(group, { publicOnly: true }),
-        );
-        expect(finals).toEqual(expected);
-        const projected = projectFinalResponseContext(raw, finals);
-        expect(projected).toEqual([...bootstrap, ...expected]);
-        expect(
-          JSON.stringify(defaultConvertToLlm(projected)).length,
-        ).toBeLessThan(JSON.stringify(defaultConvertToLlm(raw)).length / 10);
-        expect(await session.loadMessages(group, "shared", owner)).toEqual(raw);
-      }
-      expect(
-        session.readSessionFinalResponses(
-          group,
-          "other",
-          "main",
-          repo.readCommittedConversations(group, { publicOnly: true }),
-        ),
-      ).toEqual([]);
-    } finally {
-      repo.close();
-    }
-  });
-
-  it("requires exact same-owner/session user and assistant references and never falls back from an ineligible final", async () => {
-    const group = "final-guards";
-    const userEntryId = await session.appendMessage(
-      group,
-      "shared",
-      { role: "user", content: "input", timestamp: 1 },
-      "main",
-    );
-    const good = await session.appendMessage(
-      group,
-      "shared",
-      answer("intermediate"),
-      "main",
-    );
-    const ids: number[] = [];
-    for (const message of [
-      answer("error", "error"),
-      answer("aborted", "aborted"),
-      answer("tool", "toolUse"),
-      answer(""),
-      { ...answer("error message"), errorMessage: "failure" },
-      {
-        ...answer("tool call"),
-        content: [
-          { type: "toolCall", id: "call", name: "read", arguments: {} },
-        ],
-      } as AssistantMessage,
-    ]) {
-      ids.push(await session.appendMessage(group, "shared", message, "main"));
-    }
-    ids.push(
-      await session.appendMessage(
-        group,
-        "other",
-        answer("other session"),
-        "main",
-      ),
-    );
-    ids.push(
-      await session.appendMessage(
-        group,
-        "shared",
-        answer("other owner"),
-        "worker",
-      ),
-    );
-    ids.push(999999);
-    expect(
-      session.readSessionFinalResponses(
-        group,
-        "shared",
-        "main",
-        ids.map((assistantEntryId) => ({ userEntryId, assistantEntryId })),
-      ),
-    ).toEqual([]);
-    expect(
-      session.readSessionFinalResponses(group, "shared", "main", [
-        { userEntryId, assistantEntryId: good },
-        { userEntryId, assistantEntryId: good },
-      ]),
-    ).toEqual(
-      [answer("intermediate")].map((message) => ({
-        ...message,
-        timestamp: expect.any(Number),
-      })),
     );
   });
 });

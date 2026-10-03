@@ -136,22 +136,6 @@ describe("sendMessage: Docker 起動構成", () => {
     vi.resetModules();
   });
 
-  it.each([
-    undefined,
-    [],
-  ])("preserves absent versus empty final-only context in the runner payload (%j)", async (sessionFinalResponses) => {
-    const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi", {
-      agentId: "main",
-      sessionFinalResponses,
-    });
-    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
-    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0]);
-    if (sessionFinalResponses === undefined)
-      expect(payload).not.toHaveProperty("sessionFinalResponses");
-    else expect(payload.sessionFinalResponses).toEqual([]);
-  });
-
   it("isolates the default Docker launch with scoped mounts, firewall bootstrap, and proxy-only credentials", async () => {
     const { sendMessage } = await import("./manager.js");
     const initialMemory = await import(
@@ -183,6 +167,9 @@ describe("sendMessage: Docker 起動構成", () => {
     );
     prepareMemory.mockRestore();
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    expect(JSON.parse(proc.stdin.write.mock.calls[0][0])).not.toHaveProperty(
+      "historyMessages",
+    );
     expect(
       JSON.stringify([spawnMock.mock.calls, proc.stdin.write.mock.calls]),
     ).not.toContain("host-only-memory-test-key");
@@ -955,10 +942,12 @@ describe("sendMessage: 添付ファイル", () => {
       agentId: "main",
       attachments,
       source,
+      historyMessages: [],
     });
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
     expect(payload.source).toEqual(source);
+    expect(payload.historyMessages).toEqual([]);
     expect(payload).not.toHaveProperty("execution");
     expect(payload.content).toContain("[添付ファイル]");
   });

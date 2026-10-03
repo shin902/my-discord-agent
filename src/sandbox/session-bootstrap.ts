@@ -169,23 +169,6 @@ export const CONTEXT_BOOTSTRAP_TYPES = new Set([
   SELF_BOOTSTRAP_TYPE,
 ]);
 
-/** Keep session initialization snapshots, replacing prior run traces with adopted finals. */
-export function projectFinalResponseContext(
-  messages: AgentMessage[],
-  finals: AssistantMessage[],
-): AgentMessage[] {
-  return [
-    ...messages.filter(
-      (message) =>
-        isSystemPromptSnapshotMessage(message) ||
-        isSessionTimeAnchorMessage(message) ||
-        CONTEXT_BOOTSTRAP_TYPES.has(getCustomType(message) ?? "") ||
-        isInitialMemoryMessage(message),
-    ),
-    ...finals,
-  ];
-}
-
 export interface FrozenExecutionIdentity {
   systemPromptSnapshotContent?: string;
   memorySnapshotContent?: string;
@@ -329,6 +312,12 @@ export async function initializeSessionBootstrap(
 
   return {
     messages,
+    initialMessages: messages.filter(
+      (message) =>
+        isBootstrapMessage(message) ||
+        isSessionTimeAnchorMessage(message) ||
+        isInitialMemoryMessage(message),
+    ),
     skills,
     sessionAnchorTimestamp,
     needsSystemPromptSnapshot,

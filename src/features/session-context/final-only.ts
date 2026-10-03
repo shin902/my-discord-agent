@@ -1,0 +1,68 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { ConversationEntries } from "../../agent/conversation.js";
+import { readSessionEntries } from "../../agent/session.js";
+import type { GroupConfig } from "../../config/groups.js";
+import { getQueueRepository } from "../../queue/repository.js";
+import type { InboxMessage } from "../../queue/types.js";
+
+/** Select exact adopted finals, never infer them from adjacent raw messages. */
+export function projectSessionContext(
+  entries: ReadonlyMap<number, AgentMessage>,
+  references: Iterable<ConversationEntries>,
+): AssistantMessage[] {
+  const finals = new Map<number, AssistantMessage>();
+  for (const { userEntryId, assistantEntryId } of references) {
+    const user = entries.get(userEntryId);
+    const message = entries.get(assistantEntryId);
+    if (
+      user?.role !== "user" ||
+      message?.role !== "assistant" ||
+      message.errorMessage ||
+      (message.stopReason !== "stop" && message.stopReason !== "length") ||
+      message.content.some((block) => block.type === "toolCall")
+    )
+      continue;
+    const content = message.content.filter((block) => block.type === "text");
+    if (
+      !content
+        .map((block) => block.text)
+        .join("")
+        .trim()
+    )
+      continue;
+    finals.set(assistantEntryId, { ...message, content });
+  }
+  return [...finals.values()];
+}
+
+/** Undefined preserves full history; [] explicitly removes prior run traces. */
+export function resolveSessionContext(
+  input: InboxMessage,
+  group: GroupConfig,
+  agentId: string,
+): AgentMessage[] | undefined {
+  if (
+    input.cronJobId ||
+    !input.routingChannelId ||
+    group.channels.find(
+      (channel) => channel.channelId === input.routingChannelId,
+    )?.sessionContext !== "final-only"
+  )
+    return undefined;
+  const references = [
+    ...getQueueRepository().readCommittedConversations(input.groupName, {
+      publicOnly: true,
+    }),
+  ];
+  const entries = readSessionEntries(
+    input.groupName,
+    input.sessionId,
+    agentId,
+    references.flatMap(({ userEntryId, assistantEntryId }) => [
+      userEntryId,
+      assistantEntryId,
+    ]),
+  );
+  return projectSessionContext(entries, references);
+}
