@@ -787,6 +787,10 @@ async function processCronThreadDelivery(
         try {
           return await sendMessage(msg.groupName, sessionId, msg.content, {
             agentId,
+            historyMessages: resolveSessionContext(
+              { ...msg, sessionId },
+              agentId,
+            ),
             onConversation: (entries) => {
               conversation = entries;
             },
