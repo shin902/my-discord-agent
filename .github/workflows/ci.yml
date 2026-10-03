@@ -66,6 +66,9 @@ jobs:
       - name: Install browser for Gallery smoke
         run: pnpm exec playwright install --with-deps chromium
 
+      - name: Install PDF renderer for read tests
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
       - name: Test
         env:
           X_SAVED_GALLERY_BROWSER_TEST: "1"

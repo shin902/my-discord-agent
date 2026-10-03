@@ -27,7 +27,7 @@
 | `x-search` | Xを検索し、`top` / `latest`のstructured resultを最大50件返す。X検索演算子はqueryへ直接指定する |
 | `arxiv-survey` | 1〜8個の自然言語クエリをOR条件でまとめてarXiv検索。期間指定の定期サーベイ向け |
 | `list-calendars` | Google Calendarのカレンダー一覧を取得。ID・表示名・アクセス権・タイムゾーンを返し、複数ページも自動的に最後まで取得する |
-| `read` | ワークスペース内のファイルを読み込む |
+| `read` | ファイルのテキスト・画像、PDF の指定 1 ページを読み込む |
 | `write` | ワークスペース内にファイルを書き込む |
 | `edit` | ワークスペース内のファイルを文字列置換で編集する |
 | `list` | ワークスペース内のディレクトリ一覧を取得する |
@@ -64,6 +64,14 @@ validate後にmaterializeされたcanonical argsを、run開始時に固定さ�
 approval UIは認可機構やpublic / multi-user環境の安全境界ではありません。安全性は危険なmutation capabilityを `tools` / `toolSets` に付与しないことで担保します。`approvalUserIds`、mandatory registry set、tool固有のpolicy/summary/target、approval TTL、grant tokenは提供しません。
 
 **注意:** `webfetch` は削除済み。URLの内容取得には`agent-reach`ツールを使う。
+
+### read で PDF の見た目を確認する
+
+`read({ path: "lecture.pdf", page: 3 })` は 1 始まりの指定ページだけを PNG の image content として返す。`page` は PDF で必須で、PDF 以外には指定できない。PDF と画像では `startLine` / `lineCount` を使えない。ページ範囲外、破損・暗号化などはエラーを返す。
+
+Runner image に同梱する Poppler (`pdftoppm`) を sandbox 内でローカル実行し、長辺を 2048px に収める。出力は標準出力から読み込み、一時ファイルや workspace の生成物を残さない。処理は 30 秒、画像出力は 10 MiB を上限とし、Agent のキャンセルにも従う。外部サービス、OCR、全文テキスト抽出、全ページの一括画像化は行わない。PNG / JPEG / GIF / WebP の既存画像読み込みも利用できる。
+
+変更を反映するには Runner image を再ビルドする。ローカルで `pnpm test` を実行する開発環境にも `pdftoppm` が必要（Debian / Ubuntu: `sudo apt-get install poppler-utils`、Alpine: `apk add poppler-utils`）。
 
 ## Discord へのツールコール通知
 

@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { createReadStream } from "node:fs";
 import {
   glob,
@@ -8,11 +9,14 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, normalize } from "node:path";
+import { promisify } from "node:util";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
 import { assertNoParentTraversal } from "./path-safety.js";
+
+const execFileAsync = promisify(execFile);
 
 const WORKSPACE = "/workspace";
 const GREP_MAX_RESULTS = 200;
@@ -65,6 +69,14 @@ const readParameters = Type.Object({
     description:
       "Path to read, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
   }),
+  page: Type.Optional(
+    Type.Integer({
+      description:
+        "1-based PDF page to render as an image. Required for PDFs; only valid for PDFs.",
+      minimum: 1,
+      maximum: 2147483647,
+    }),
+  ),
   startLine: Type.Optional(
     Type.Integer({
       description:
@@ -187,18 +199,104 @@ async function selectLinesFromStream(
   };
 }
 
+async function renderPdfPage(
+  path: string,
+  page: number,
+  signal?: AbortSignal,
+): Promise<Buffer> {
+  try {
+    const { stdout } = await execFileAsync(
+      "pdftoppm",
+      [
+        "-f",
+        String(page),
+        "-l",
+        String(page),
+        "-singlefile",
+        "-scale-to",
+        "2048",
+        "-png",
+        path,
+      ],
+      {
+        encoding: "buffer",
+        maxBuffer: READ_IMAGE_BYTE_LIMIT,
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+        signal,
+      },
+    );
+    if (stdout.length === 0) throw new Error("画像が生成されませんでした");
+    return stdout;
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    const failure = error as NodeJS.ErrnoException & {
+      stderr?: Buffer;
+      killed?: boolean;
+    };
+    if (failure.code === "ENOENT") {
+      throw new Error(
+        "PDF の画像化には pdftoppm が必要です。Runner image を再ビルドしてください",
+        { cause: error },
+      );
+    }
+    const reason =
+      failure.killed || failure.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+        ? "処理時間または出力サイズの上限を超えました"
+        : failure.stderr?.toString().trim() || failure.message;
+    throw new Error(
+      `PDF の page ${page} を画像化できません（ページ範囲・PDF の破損・暗号化を確認してください）: ${reason}`,
+      { cause: error },
+    );
+  }
+}
+
 export const readTool: AgentTool<typeof readParameters> = {
   name: "read",
   label: "Read File",
   description:
-    "Read a file in the workspace or an additional mounted path. Use startLine and lineCount for a line range, lineCount alone for lines from the beginning, or startLine alone for the suffix from that line. The result includes file size, total line count, and the returned range. For large files, read consecutive bounded ranges instead of the whole file.",
+    "Read a file in the workspace or an additional mounted path. Use startLine and lineCount for a line range, lineCount alone for lines from the beginning, or startLine alone for the suffix from that line. The result includes file size, total line count, and the returned range. For large files, read consecutive bounded ranges instead of the whole file. PNG/JPEG/GIF/WebP are returned as images. For PDFs, specify page (1-based) to view exactly one page as an image; line ranges are not supported.",
   parameters: readParameters,
-  execute: async (_toolCallId, { path, startLine, lineCount }) => {
+  execute: async (
+    _toolCallId,
+    { path, page, startLine, lineCount },
+    signal,
+  ) => {
     const safePath = sanitizePath(path);
     const fp = fullPath(safePath);
     const hasRange = validateReadRange({ startLine, lineCount });
 
-    const mimeType = IMAGE_MIME_TYPES[extname(safePath).toLowerCase()];
+    const extension = extname(safePath).toLowerCase();
+    validatePositiveInteger("page", page);
+    if (extension === ".pdf") {
+      if (page === undefined)
+        throw new Error(
+          "PDF には page（1 始まりのページ番号）を指定してください",
+        );
+      if (page > 2147483647)
+        throw new Error("page は 2147483647 以下で指定してください");
+      if (hasRange) throw new Error("PDF では行範囲を指定できません");
+      const image = await renderPdfPage(fp, page, signal);
+      return {
+        content: [
+          {
+            type: "image",
+            data: image.toString("base64"),
+            mimeType: "image/png",
+          },
+        ],
+        details: {
+          path: safePath,
+          page,
+          size: image.length,
+          mimeType: "image/png",
+        },
+      };
+    }
+    if (page !== undefined)
+      throw new Error("page は PDF ファイルにだけ指定できます");
+
+    const mimeType = IMAGE_MIME_TYPES[extension];
     if (mimeType) {
       if (hasRange) {
         throw new Error("画像ファイルでは行範囲を指定できません");

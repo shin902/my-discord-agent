@@ -17,7 +17,8 @@ RUN apk add --no-cache \
     iptables \
     util-linux \
     tzdata \
-    sqlite
+    sqlite \
+    poppler-utils
 
 RUN set -eux; \
     target_arch="${TARGETARCH:-amd64}"; \
