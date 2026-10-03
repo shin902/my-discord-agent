@@ -70,7 +70,7 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 
 capture保存後、未完了画像が`settings.limit`枚未満なら何もせず、以上なら古いものからちょうど`limit`枚を1 batchとして解析します。`settings.mode`が`summarize`なら、capture側で画像を`settings.visionModel`により個別に並列要約してDBの`summary`へ保存し、全画像の要約が揃ってから通常Agent jobをenqueueします。`direct`ならcapture IDと入力文をenqueueし、各実行・retry時にcapture DBから一時画像をworkspaceへ展開します。実行終了時には画像をcleanupするため、queue待機中にproducerの一時ファイルを保持しません。
 
-Memory更新は既存queue / pollerがMain Agentのper-run sessionで実行します。共通のprovider lock、timeout / abort、retry、lease / fencing、結果commit、session retentionを利用します。同じgroupの未終了capture jobがある間は追加投入せず、Agent成功後のSourceHandlers完了callbackがcapture DBのtransactionで`completed_at`と`accepted = 1`を更新し、次のfull batchを再開します。batchのcapture IDを使ったkeyと既存のactive-only idempotencyで重複投入を抑止します。
+Memory更新は既存queue / pollerがMain Agentのfresh sessionで実行します。共通のprovider lock、timeout / abort、retry、lease / fencing、結果commit、session retentionを利用します。同じgroupの未終了capture jobがある間は追加投入せず、Agent成功後のSourceHandlers完了callbackがcapture DBのtransactionで`completed_at`と`accepted = 1`を更新し、次のfull batchを再開します。batchのcapture IDを使ったkeyと既存のactive-only idempotencyで重複投入を抑止します。
 
 capture jobは`discordOutput: "none"`により最終応答・typing・progress・errorの自動Discord出力を抑止します。Discord送信先の設定や`<NO_REPLY>`の応答は不要で、正常終了した空応答も成功です。既存の`<NO_REPLY>`も利用できます。pollerのDiscord接続判定は変わらないため、実行開始には既存どおりDiscord readyが必要です。
 
@@ -121,7 +121,7 @@ capture jobは`discordOutput: "none"`により最終応答・typing・progress�
     "prompt": "capturelog内の対象日 {{date}} の活動ログを分析して日次レポートを作成してください。",
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "new-thread",
-    "sessionMode": "per-run",
+    "historyMode": "fresh",
     "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
     "tools": ["read"]
   }
@@ -131,7 +131,7 @@ capture jobは`discordOutput: "none"`により最終応答・typing・progress�
 - `groupName` は有効な `screenCaptureSummary` と同じgroupを指定します。
 - `startDate` はこの方式で最初にレポートを生成する日（JST、`YYYY-MM-DD`、その日を含む）です。既存cronから移行する場合、最後にレポート済みの日の翌日を指定します。既存cronの成功履歴は自動移行しません。
 - `prompt` は必須です。`{{date}}` は対象日に置換され、対象日を明示した指示も付加されます。既存promptの「昨日」は対象日に読み替えてください。
-- `channelId` は必須のDiscord出力先です。`deliveryMode` は `direct`（既定）/ `new-thread` / `item-thread`、`sessionMode` は `per-run`（既定）または `destination` で、通常cronと同じ意味です。`item-thread` は `sessionMode: "destination"` と組み合わせてください。`sessionMode` を省略すると既定値の `per-run` と衝突するため、この組み合わせは起動時の設定検証で拒否されます。
+- `channelId` は必須のDiscord出力先です。`deliveryMode` は `direct`（既定）/ `new-thread` / `item-thread`、`historyMode` は `fresh`（既定）または `full` で、通常cronと同じ意味です。`item-thread` は `historyMode: "full"` と組み合わせてください。`historyMode` を省略すると既定値の `fresh` と衝突するため、この組み合わせは起動時の設定検証で拒否されます。
 - `botId` は省略可能です。指定すると通常cronと同じくBot profileを適用し、`groupName` から利用できるBotに限られます。未定義または別グループのBotは起動時に失敗します。
 - `model` / `tools` / `skills` / `contextFiles` / `mounts` などのAgent設定は日次job専用です。省略時はgroup設定を継承します。画像batchのAgent設定は継承しません。
 

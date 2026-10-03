@@ -93,14 +93,14 @@ describe("declarative item-thread poller integration", () => {
   it.each([
     ["new-thread", "final-only"],
     ["item-thread", "final-only"],
-    ["new-thread", "destination"],
-    ["item-thread", "destination"],
-  ] as const)("passes the selected history to a %s/%s retry without changing raw entries", async (deliveryMode, sessionMode) => {
+    ["new-thread", "full"],
+    ["item-thread", "full"],
+  ] as const)("passes the selected history to a %s/%s retry without changing raw entries", async (deliveryMode, historyMode) => {
     const repository = state.repository as InstanceType<typeof QueueRepository>;
-    const initialSessionId = `${deliveryMode}-${sessionMode}-temporary`;
+    const initialSessionId = `${deliveryMode}-${historyMode}-temporary`;
     const sessionId =
       deliveryMode === "new-thread"
-        ? `${deliveryMode}-${sessionMode}-thread`
+        ? `${deliveryMode}-${historyMode}-thread`
         : initialSessionId;
     const final = {
       role: "assistant",
@@ -150,7 +150,7 @@ describe("declarative item-thread poller integration", () => {
       content: "current input",
       timestamp: new Date().toISOString(),
       cronDeliveryMode: deliveryMode,
-      cronSessionMode: sessionMode,
+      cronHistoryMode: historyMode,
       cronJobId: "history-retry",
       ...(deliveryMode === "item-thread" ? { cronProvisioning: true } : {}),
     }).job;
@@ -232,7 +232,7 @@ describe("declarative item-thread poller integration", () => {
     const options = vi.mocked(sendMessage).mock
       .calls[1][3] as SendMessageOptions;
     expect(options.historyMessages).toEqual(
-      sessionMode === "final-only" ? [final] : undefined,
+      historyMode === "final-only" ? [final] : undefined,
     );
     expect(await loadMessages("group", sessionId, "main")).toEqual(
       rawBeforeRetry,
@@ -254,7 +254,7 @@ describe("declarative item-thread poller integration", () => {
       content: "summarize this item",
       timestamp: new Date().toISOString(),
       cronDeliveryMode: "item-thread",
-      cronSessionMode: "destination",
+      cronHistoryMode: "full",
       cronThread: true,
       cronJobId: "item-empty-job",
       cronProvisioning: true,
@@ -303,7 +303,7 @@ describe("declarative item-thread poller integration", () => {
       content: "summarize this item",
       timestamp: new Date().toISOString(),
       cronDeliveryMode: "item-thread",
-      cronSessionMode: "destination",
+      cronHistoryMode: "full",
       cronThread: true,
       cronJobId: "item-job",
       cronProvisioning: true,

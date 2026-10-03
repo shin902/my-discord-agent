@@ -32,7 +32,7 @@ describe("executeJob", () => {
     vi.clearAllMocks();
   });
 
-  it("direct + per-run: 指定先へ毎回独立したセッションで送る", async () => {
+  it("direct + fresh: 指定先へ毎回独立したセッションで送る", async () => {
     await executeJob({
       id: "test-job",
       schedule: "* * * * *",
@@ -41,7 +41,7 @@ describe("executeJob", () => {
       prompt: "do something",
       channelId: "ch-123",
       deliveryMode: "direct",
-      sessionMode: "per-run",
+      historyMode: "fresh",
     });
 
     expect(vi.mocked(appendInbox)).toHaveBeenCalledOnce();
@@ -51,11 +51,11 @@ describe("executeJob", () => {
     expect(arg.content).toBe("do something");
     expect(arg.sessionId).toMatch(/^cron-test-job-/);
     expect(arg.cronDeliveryMode).toBe("direct");
-    expect(arg.cronSessionMode).toBe("per-run");
+    expect(arg.cronHistoryMode).toBe("fresh");
     expect(arg.cronJobId).toBe("test-job");
   });
 
-  it("new-thread + destination: 新規スレッド用の設定をキューへ渡す", async () => {
+  it("new-thread + full: 新規スレッド用の設定をキューへ渡す", async () => {
     await executeJob({
       id: "test-job",
       schedule: "* * * * *",
@@ -64,7 +64,7 @@ describe("executeJob", () => {
       prompt: "do something",
       channelId: "ch-123",
       deliveryMode: "new-thread",
-      sessionMode: "destination",
+      historyMode: "full",
     });
 
     expect(vi.mocked(appendInbox)).toHaveBeenCalledOnce();
@@ -74,11 +74,11 @@ describe("executeJob", () => {
     expect(arg.content).toBe("do something");
     expect(arg.sessionId).toMatch(/^cron-test-job-/);
     expect(arg.cronDeliveryMode).toBe("new-thread");
-    expect(arg.cronSessionMode).toBe("destination");
+    expect(arg.cronHistoryMode).toBe("full");
     expect(arg.cronJobId).toBe("test-job");
   });
 
-  it("item-thread + destination: 投入ごとに新しいidentityをキューへ渡す", async () => {
+  it("item-thread + full: 投入ごとに新しいidentityをキューへ渡す", async () => {
     const job = {
       id: "item-job",
       schedule: "5m",
@@ -87,7 +87,7 @@ describe("executeJob", () => {
       prompt: "summarize item",
       channelId: "ch-123",
       deliveryMode: "item-thread" as const,
-      sessionMode: "destination" as const,
+      historyMode: "full" as const,
     };
 
     await executeJob(job);
@@ -98,7 +98,7 @@ describe("executeJob", () => {
       1,
       expect.objectContaining({
         cronDeliveryMode: "item-thread",
-        cronSessionMode: "destination",
+        cronHistoryMode: "full",
         cronThread: true,
         cronProvisioning: true,
         idempotencyKey: expect.stringMatching(/^cron-item:item-job:/),
@@ -111,7 +111,7 @@ describe("executeJob", () => {
     expect(discordClient.channels.fetch).not.toHaveBeenCalled();
   });
 
-  it("new-thread + destination: 実行ごとに異なる仮セッションをキューへ渡す", async () => {
+  it("new-thread + full: 実行ごとに異なる仮セッションをキューへ渡す", async () => {
     const job = {
       id: "repeated-job",
       schedule: "5m",
@@ -120,7 +120,7 @@ describe("executeJob", () => {
       prompt: "do something",
       channelId: "ch-123",
       deliveryMode: "new-thread" as const,
-      sessionMode: "destination" as const,
+      historyMode: "full" as const,
     };
 
     await executeJob(job);
@@ -135,7 +135,7 @@ describe("executeJob", () => {
     expect(sessionIds[0]).not.toBe(sessionIds[1]);
   });
 
-  it("direct + destination: 指定先IDをセッションIDとして使う", async () => {
+  it("direct + full: 指定先IDをセッションIDとして使う", async () => {
     await executeJob({
       id: "test-job",
       schedule: "* * * * *",
@@ -144,7 +144,7 @@ describe("executeJob", () => {
       prompt: "do something",
       channelId: "thread-123",
       deliveryMode: "direct",
-      sessionMode: "destination",
+      historyMode: "full",
     });
 
     const arg = vi.mocked(appendInbox).mock.calls[0][0];
@@ -165,7 +165,7 @@ describe("executeJob", () => {
     expect(vi.mocked(appendInbox)).toHaveBeenCalledWith(
       expect.objectContaining({
         cronDeliveryMode: "new-thread",
-        cronSessionMode: "destination",
+        cronHistoryMode: "full",
       }),
     );
   });

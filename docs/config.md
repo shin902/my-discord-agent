@@ -257,7 +257,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 ## config/cron.json
 
-`sessionMode: "final-only"` はcron jobでdestinationと同じsession IDを使い、過去公開finalだけを継続contextへ渡す設定です。`per-run` / `destination` はfull historyを維持します。queueに保存されたmodeを実行時に使用します。適用範囲・旧履歴の扱いは [cronのfinal-only sessionMode](spec/cron.md#final-only-sessionmode) を参照してください。
+cronの `historyMode` は過去の履歴の引き継ぎ方を指定します。`full` は配信先sessionを継続してfull historyを使い、`final-only` は同じsession IDで過去公開finalだけを継続contextへ渡します。`fresh` は実行ごとに新しいsessionを使います。queueに保存されたmodeを実行時に使用します。適用範囲・旧履歴の扱いは [cronのfinal-only historyMode](spec/cron.md#final-only-historymode) を参照してください。
 
 定期実行ジョブの定義。トップレベルは配列。ファイル自体が存在しない場合も cron は空扱いで起動する（空配列の場合と同じ挙動）。
 詳細は `docs/spec/cron.md` を参照。
@@ -269,7 +269,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
     "schedule": "*/30 * * * *",
     "enabled": true,
     "deliveryMode": "direct",
-    "sessionMode": "per-run",
+    "historyMode": "fresh",
     "handler": "jobs/mail.ts"
   },
   {
@@ -280,7 +280,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
     "prompt": "昨日の要点を短くまとめてください",
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "direct",
-    "sessionMode": "per-run",
+    "historyMode": "fresh",
     "model": { "provider": "zai-custom", "modelId": "glm-4.7-flash" },
     "tools": ["read"],
     "skills": ["session-logs"]
@@ -288,28 +288,28 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 ]
 ```
 
-宣言的ジョブ（`handler` を使わず `groupName`/`prompt`/`channelId`/`deliveryMode`/`sessionMode` を指定する形式）では、投稿方法とセッションの扱いを別々に設定する。
+宣言的ジョブ（`handler` を使わず `groupName`/`prompt`/`channelId`/`deliveryMode`/`historyMode` を指定する形式）では、投稿方法と過去履歴の引き継ぎ方を別々に設定する。
 
 | フィールド | 値 | 動作 |
 |---|---|---|
 | `botId` | string（任意） | 同じgroupに所属するAgent Bot profile ID。未指定はMain。指定時はhandlerでもgroupName必須。宣言型jobと `enqueueCronInbox()` を使うhandlerが対象 |
 | `deliveryMode` | `direct` | `channelId` へ直接投稿する。通常チャンネルだけでなく既存スレッドのIDも指定可能 |
 | `deliveryMode` | `new-thread` | `channelId` を親として実行ごとに新しいスレッドを作成する |
-| `deliveryMode` | `item-thread` | 一時sessionでAIを実行し、応答がある場合だけ親メッセージを投稿してmessage/thread IDへsessionを昇格してから1項目用スレッドを作成する。`sessionMode` は `destination` または `final-only` 必須 |
-| `sessionMode` | `per-run` | cron実行ごとに独立したセッションIDを生成する |
-| `sessionMode` | `destination` | 実際の投稿先チャンネルまたはスレッドのIDをセッションIDにする |
-| `sessionMode` | `final-only` | `destination` と同じsession IDを使い、過去公開finalだけを継続contextへ渡す |
+| `deliveryMode` | `item-thread` | 一時sessionでAIを実行し、応答がある場合だけ親メッセージを投稿してmessage/thread IDへsessionを昇格してから1項目用スレッドを作成する。`historyMode` は `full` または `final-only` 必須 |
+| `historyMode` | `full` | 配信先sessionを継続してfull historyを使う。投稿先チャンネルまたはスレッドのIDをセッションIDにする |
+| `historyMode` | `final-only` | `full` と同じsession IDを使い、過去公開finalだけを継続contextへ渡す |
+| `historyMode` | `fresh` | cron実行ごとに新しいsessionを使い、過去runの履歴を引き継がない |
 | `noReply` | `true` | このcronリクエストのsystem promptへ、通知不要時に独立行 `<NO_REPLY>` を返す指示を追加する。`item-thread`でも利用可能 |
 
-独立行 `<NO_REPLY>` の応答は通常会話、および`direct`/`new-thread`/`item-thread` cronで正常完了し、Discordへ配送しない。inlineの言及は通常どおり配送する。`noReply`の既定値は`false`で、AGENTS.mdなどに同じ指示を書く場合は不要。`item-thread`はAI実行後までDiscord状態を作らないため、NO_REPLY時は親メッセージもthreadも作成しない。Mail/RSSは無配信時も処理済みとしてsourceを確定する。Mailの既読化に失敗した場合は未読のまま次回cronで再取得し、RSSの確定に失敗した場合はclaimを解放して次回cronで再取得する。`new-thread` + `destination` は既存のsession ID契約を守るためAI実行前にスレッドを作るので、NO_REPLY時は投稿のないスレッドが残る。
+独立行 `<NO_REPLY>` の応答は通常会話、および`direct`/`new-thread`/`item-thread` cronで正常完了し、Discordへ配送しない。inlineの言及は通常どおり配送する。`noReply`の既定値は`false`で、AGENTS.mdなどに同じ指示を書く場合は不要。`item-thread`はAI実行後までDiscord状態を作らないため、NO_REPLY時は親メッセージもthreadも作成しない。Mail/RSSは無配信時も処理済みとしてsourceを確定する。Mailの既読化に失敗した場合は未読のまま次回cronで再取得し、RSSの確定に失敗した場合はclaimを解放して次回cronで再取得する。`new-thread` + `full` は既存のsession ID契約を守るためAI実行前にスレッドを作るので、NO_REPLY時は投稿のないスレッドが残る。
 
-既存スレッドへ投稿しつつ毎回セッションを分離する場合は、`channelId` にスレッドID、`deliveryMode` に `direct`、`sessionMode` に `per-run` を指定する。`item-thread` は1項目ごとの独立スレッドを使うため `destination` または `final-only` と組み合わせる。旧 `mode` も後方互換のため読み込めるが、新しい設定では使用しない。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` として扱われる。
+既存スレッドへ投稿しつつ毎回セッションを分離する場合は、`channelId` にスレッドID、`deliveryMode` に `direct`、`historyMode` に `fresh` を指定する。`item-thread` は1項目ごとの独立スレッドを使うため `full` または `final-only` と組み合わせる。旧 `mode` も後方互換のため読み込めるが、新しい設定では使用しない。`to-channel` は `direct` + `fresh`、`to-thread` は `new-thread` + `full` として扱われる。
 
 `model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` を任意で指定すると、`group → Bot profile（botId指定時） → cron job` の順でそのジョブの実行時設定を解決する。cronの `channelId` は配送先だけを表し、配送先channelまたは既存threadのAgentConfig・Bot指定は継承しない。`skills` はスキル名の配列または `[]` を指定できる。指定フィールドは完全置換で、モデルオブジェクトや配列のdeep merge・暗黙加算は行わない。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。`allowMention` / `toolLogArgs` はgroup設定のみで、cron jobからは変更できない。
 
 ### jobs/mail.ts
 
-`mail.ts` は未読メールごとに本文とACK対象のメールIDを取得し、Mail機能モジュールで決定論的な `mailRouteKey` を付けて共通cron enqueue経路へ投入する。GitHub通知は送信元が `notifications@github.com` で、`List-Id` からowner/repo、件名末尾 `(#number)` または `(PR #number)` からitem番号を取得できた場合だけ `github:<owner>/<repo>:item:<number>` にする。PRのCI失敗通知（`PR run failed:`）は件名末尾のコミットハッシュをGitHub APIで照会し、同じリポジトリの関連PRを一意に特定できれば同じitem routeにする。候補なし・複数候補・取得上限の場合は送信元routeへ戻す。APIエラー時はenqueueせず未読のまま次回の収集で再試行する。この照会には `github` providerと対象リポジトリへの読み取り権限が必要。本文中のURLはroutingに使わない。それ以外は表示名を除いた小文字のsender addressから `mail:<address>` を生成する。Mailは常に `direct` + `per-run` で要約sessionをメールごとに分離し、親Text Channelの下に送信元別Discord threadを作る。`channelId` には既存threadではなく親Text Channelを指定する（既存threadなら配送を失敗として扱う）。mappingはgroup・親channel・routeごとに分離し、thread名にはsender addressまたは `owner/repo #number` を使う。保存済みthreadが削除されていれば新規作成して更新する。全delivery chunkが`sent`になった後にだけメールを既読化し、既存のretry / dedupe semanticsは変更しない。
+`mail.ts` は未読メールごとに本文とACK対象のメールIDを取得し、Mail機能モジュールで決定論的な `mailRouteKey` を付けて共通cron enqueue経路へ投入する。GitHub通知は送信元が `notifications@github.com` で、`List-Id` からowner/repo、件名末尾 `(#number)` または `(PR #number)` からitem番号を取得できた場合だけ `github:<owner>/<repo>:item:<number>` にする。PRのCI失敗通知（`PR run failed:`）は件名末尾のコミットハッシュをGitHub APIで照会し、同じリポジトリの関連PRを一意に特定できれば同じitem routeにする。候補なし・複数候補・取得上限の場合は送信元routeへ戻す。APIエラー時はenqueueせず未読のまま次回の収集で再試行する。この照会には `github` providerと対象リポジトリへの読み取り権限が必要。本文中のURLはroutingに使わない。それ以外は表示名を除いた小文字のsender addressから `mail:<address>` を生成する。Mailは常に `direct` + `fresh` で要約sessionをメールごとに分離し、親Text Channelの下に送信元別Discord threadを作る。`channelId` には既存threadではなく親Text Channelを指定する（既存threadなら配送を失敗として扱う）。mappingはgroup・親channel・routeごとに分離し、thread名にはsender addressまたは `owner/repo #number` を使う。保存済みthreadが削除されていれば新規作成して更新する。全delivery chunkが`sent`になった後にだけメールを既読化し、既存のretry / dedupe semanticsは変更しない。
 
 AI・delivery・既読化の失敗時はメールが未読のまま残る。次回cronは過去jobを復旧せず、そのメールに新しいjobを作るため、失敗した試行のDiscord投稿が残る場合は同じthread内で重複しうる。これはmailの既知の残余リスクとして扱い、RSS dispatchなど別目的の冪等性は維持する。
 
@@ -339,7 +339,7 @@ RSS処理は収集とエージェント投入を分離する。`rss-collect.ts` 
     "channelId": "YOUR_CHANNEL_ID",
     "prompt": "各記事のURLをagent-reachで取得し、日本語で要約してください",
     "deliveryMode": "direct",
-    "sessionMode": "per-run",
+    "historyMode": "fresh",
     "handler": "jobs/rss-dispatch.ts",
     "tools": ["bash"],
     "skills": ["web"],
@@ -393,7 +393,7 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 
 - `settings.owner`/`settings.repo`: 対象リポジトリ
 - `settings.allowedAuthors`: 処理対象とする Issue 投稿者の許可リスト（省略時は `owner` のみ）。第三者が投稿した Issue は処理対象から除外し、issue本文への攻撃文によるプロンプトインジェクションの影響範囲を限定する
-- 各Issueは共通cron enqueue経路から、handler固定の `direct` + `per-run` で独立したAgent jobとして投入し、成功後にだけprocessed stateを保存する。`deliveryMode` / `sessionMode` はこのhandlerでは設定しても反映されない。7日経過したper-run sessionはsession-cleanupの対象になる
+- 各Issueは共通cron enqueue経路から、handler固定の `direct` + `fresh` で独立したAgent jobとして投入し、成功後にだけprocessed stateを保存する。`deliveryMode` / `historyMode` はこのhandlerでは設定しても反映されない。7日経過したfresh sessionはsession-cleanupの対象になる
 - 重複コメント防止のため、処理済み Issue 番号と `updated_at` を `data/issue-triage/state.json` に記録し、値が変化していなければ再処理しない。同一プロセス内でジョブが並行実行されても読み書きが直列化されるため、別リポジトリを対象にした複数の issue-triage ジョブを同時に動かしても state が失われない
 - エージェントがコードを根拠付けに参照できるよう、`issue-triage` グループには `config/groups.json` の `mounts` でコードを読み取り専用マウントする想定（`config/groups.example.json` 参照）
   - **`host: "."`（リポジトリルートそのもの）は絶対にマウントしないこと。** `.env`（`DISCORD_BOT_TOKEN` 等）や `config/credentials.json` は git管理外（`.gitignore`）だが実ファイルとして存在するため、読み取り専用でもエージェントの `bash` から閲覧でき、`comment-issue` で公開Issueにそのまま漏洩しうる
@@ -437,7 +437,7 @@ Discord runtime は `discord.bots` map に定義した Bot を使用します。
 | `xSavedReceiver` | — | `enabled`（既定: false）、`port`（既定: 8787、1–65535）。localhost 専用の X saved 受信サーバー。[Tailscale Serve と拡張の設定手順](x-saved.md#live-capture-setup)を参照。変更後は再起動が必要 |
 | `screenCaptureReceiver` | — | `enabled`（既定: false）、`port`（既定: 8788、1–65535）。localhost専用の画面PNG receiver。[Mac / Tailscale / 要約の設定](screen-capture.md)を参照。変更後は再起動が必要 |
 | `screenCaptureSummary` | — | `enabled`（既定: false）、`groupName`、任意のAgent設定、`settings`（mode / visionModel / limit / concurrency）。pending枚数で要約を起動。[詳細](screen-capture.md) |
-| `screenCaptureDailySummary` | — | `enabled`（既定: false）、`groupName`、`startDate`、`prompt`、`channelId`、任意のAgent設定、`deliveryMode` / `sessionMode`。撮影日の境界とbatch完了で日次レポートを起動。[詳細](screen-capture.md#日付境界による日次レポート) |
+| `screenCaptureDailySummary` | — | `enabled`（既定: false）、`groupName`、`startDate`、`prompt`、`channelId`、任意のAgent設定、`deliveryMode` / `historyMode`。撮影日の境界とbatch完了で日次レポートを起動。[詳細](screen-capture.md#日付境界による日次レポート) |
 | `xSavedGallery` | — | `enabled`（既定: false）、`port`（既定: 8789、1–65535）。有効時はPOST元検証用の `origin`（HTTPS `.ts.net` origin、末尾 `/` なし）が必須。receiverとは別のlocalhost listener。Gallery自身の認証はなく、アクセス制限はTailscale側で行う。[Gallery設定・アクセス・編集](x-saved.md#gallery-browse-and-edit-over-tailscale)を参照。変更後は再起動が必要 |
 
 Botのauthority modelと、`bot` capabilityを明示的に許可する理由は [エンティティモデルのauthority境界](spec/entity-model.md#agentgroupとbotのauthority境界) を参照。`bots` の `group` は Bot が所属する AgentGroup の trust/context boundary を指定する。通常のDiscord会話では `group → Bot profile（指定時） → 親channel` の順でAgentConfigを解決する。明示的なBot Task実行（Discordの `/bot` コマンド・agent-facing `bot` tool）では `group → Bot profile` の順で解決し、channel の設定は継承しない。Bot profile の effective `model` / `tools` / `mounts` は起動時に検証され、不正な設定があれば Discord client 初期化前に起動を停止する。Discordでは `/bot` コマンドに `bot` を指定し、`action`（`run` / `resume` / `list`）を選択できる。`run`（action省略時も同じ）は `prompt` で新しいTask Sessionを作成し、応答に表示された `session` handleを `resume` で明示指定すると同じ仕事を続行できる。手動の`run` / `resume`では、Interaction ACKとしてephemeral responseをdeferするが、成功時の受付情報としては残さない。受付成功時はBot ID、実際に渡したprompt、Task Session情報をephemeral responseとは独立した通常の永続メッセージとして投稿し、その後ephemeral ACKを削除する。validation / enqueue等の受付失敗時は、従来どおりephemeral responseへエラーを表示する。`list` は現在のAgentGroupとBotが所有するTask Sessionだけを表示し、応答はephemeralのままになる。Botの実行は通常のキュー・sandbox・Discord配送経路を利用するが、Task Sessionの履歴・添付領域は呼び出し元の通常channel/thread sessionから分離され、応答の配送先だけが呼び出しchannel/threadに残る。Bot Task内部のtool / Subagent progressは通常channelへ送信せず、error通知と最終応答は維持する。メインAgentには同じBot Registryを呼び出す組み込み `bot` toolが、effective `tools` に正確な名前 `bot` を明示した場合だけ提供され、`action=run|resume|list` を指定できる。Bot profileやqueued/direct Bot childの実行では再帰的な `bot` toolを常に無効化する。`run` / `resume` はキューへ積まず、同じtool call内でsandbox実行の完了まで待って結果を返す（非同期handle返却やpollingは行わない）。親の推論枠の借用とdeadlock防止は [provider concurrency設定](#configprovidersjson) に従う。Bot Task Sessionのqueued/direct実行はruntime.sqliteの同じordered jobs/direct-admission ledgerで直列化され、agent toolとDiscordの`/bot`が同じTask Sessionを同時にresumeしても履歴を同時更新しない。プロセス起動時は管理対象コンテナ（現行labelと旧形式の名前のものを含む）の停止を確認した後、前回プロセスの未完了admissionとqueue実行を回収する。Dockerのdiscoveryまたは停止確認に失敗した場合は起動を中止し、実行状態を回収しない。

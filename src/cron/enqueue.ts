@@ -11,7 +11,7 @@ import { buildExtraMountArgs } from "../config/mounts.js";
 import type { SourceEnvelope } from "../queue/source-handlers.js";
 import type {
   CronDeliveryMode,
-  CronSessionMode,
+  CronHistoryMode,
   QueueProducer,
 } from "../queue/types.js";
 import { loadSkills } from "../skills/loader.js";
@@ -30,7 +30,7 @@ export type CronEnqueueContext = {
   botId?: string;
   channelId?: string;
   deliveryMode?: CronDeliveryMode;
-  sessionMode?: CronSessionMode;
+  historyMode?: CronHistoryMode;
   noReply?: boolean;
   mode?: "to-channel" | "to-thread";
   idempotencyKey?: string;
@@ -40,32 +40,32 @@ export type CronEnqueueContext = {
 
 function resolveModes(ctx: CronEnqueueContext): {
   deliveryMode: CronDeliveryMode;
-  sessionMode: CronSessionMode;
+  historyMode: CronHistoryMode;
 } {
-  if (ctx.deliveryMode && ctx.sessionMode) {
+  if (ctx.deliveryMode && ctx.historyMode) {
     if (
       ctx.deliveryMode === "item-thread" &&
-      ctx.sessionMode !== "destination" &&
-      ctx.sessionMode !== "final-only"
+      ctx.historyMode !== "full" &&
+      ctx.historyMode !== "final-only"
     ) {
       throw new NonRetryableError(
-        "[cron-enqueue] item-thread は sessionMode=destination または final-only と組み合わせてください",
+        "[cron-enqueue] item-thread は historyMode=full または final-only と組み合わせてください",
       );
     }
     return {
       deliveryMode: ctx.deliveryMode,
-      sessionMode: ctx.sessionMode,
+      historyMode: ctx.historyMode,
     };
   }
   if (ctx.deliveryMode === "item-thread") {
     throw new NonRetryableError(
-      "[cron-enqueue] item-thread は sessionMode=destination または final-only と組み合わせてください",
+      "[cron-enqueue] item-thread は historyMode=full または final-only と組み合わせてください",
     );
   }
   if (ctx.mode === "to-thread") {
-    return { deliveryMode: "new-thread", sessionMode: "destination" };
+    return { deliveryMode: "new-thread", historyMode: "full" };
   }
-  return { deliveryMode: "direct", sessionMode: "per-run" };
+  return { deliveryMode: "direct", historyMode: "fresh" };
 }
 
 function buildConfigOverride(
@@ -126,7 +126,7 @@ async function validateConfigOverride(ctx: CronEnqueueContext): Promise<void> {
 async function registerCronItemThread(
   ctx: CronEnqueueContext,
   content: string,
-  sessionMode: CronSessionMode,
+  historyMode: CronHistoryMode,
 ): Promise<void> {
   if (!ctx.groupName || !ctx.channelId) {
     throw new NonRetryableError(
@@ -149,7 +149,7 @@ async function registerCronItemThread(
     content,
     timestamp: new Date().toISOString(),
     cronDeliveryMode: "item-thread",
-    cronSessionMode: sessionMode,
+    cronHistoryMode: historyMode,
     ...(ctx.noReply ? { cronNoReply: true } : {}),
     cronThread: true,
     cronJobId: ctx.id,
@@ -180,16 +180,16 @@ export async function enqueueCronInbox(
     }
   }
 
-  const { deliveryMode, sessionMode } = resolveModes(ctx);
+  const { deliveryMode, historyMode } = resolveModes(ctx);
   if (deliveryMode === "item-thread") {
-    await registerCronItemThread(ctx, content, sessionMode);
+    await registerCronItemThread(ctx, content, historyMode);
     return;
   }
 
   await validateConfigOverride(ctx);
 
   const sessionId =
-    sessionMode === "per-run" || deliveryMode === "new-thread"
+    historyMode === "fresh" || deliveryMode === "new-thread"
       ? `cron-${ctx.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       : ctx.channelId;
   const configOverride = buildConfigOverride(ctx);
@@ -202,7 +202,7 @@ export async function enqueueCronInbox(
     content,
     timestamp: new Date().toISOString(),
     cronDeliveryMode: deliveryMode,
-    cronSessionMode: sessionMode,
+    cronHistoryMode: historyMode,
     ...(ctx.noReply ? { cronNoReply: true } : {}),
     cronJobId: ctx.id,
     ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : {}),

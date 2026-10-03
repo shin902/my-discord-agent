@@ -22,7 +22,7 @@ it("carries the noReply system-prompt option without changing content", async ()
     groupName: "group",
     channelId: "channel",
     deliveryMode: "direct" as const,
-    sessionMode: "per-run" as const,
+    historyMode: "fresh" as const,
     appendInbox,
   };
 
@@ -38,15 +38,15 @@ it("carries the noReply system-prompt option without changing content", async ()
 });
 
 it.each([
-  ["direct", "per-run"],
-  ["direct", "destination"],
+  ["direct", "fresh"],
+  ["direct", "full"],
   ["direct", "final-only"],
-  ["new-thread", "per-run"],
-  ["new-thread", "destination"],
+  ["new-thread", "fresh"],
+  ["new-thread", "full"],
   ["new-thread", "final-only"],
-  ["item-thread", "destination"],
+  ["item-thread", "full"],
   ["item-thread", "final-only"],
-] as const)("carries the explicit Bot through %s/%s", async (deliveryMode, sessionMode) => {
+] as const)("carries the explicit Bot through %s/%s", async (deliveryMode, historyMode) => {
   const appendInbox = vi.fn();
   await enqueueCronInbox(
     {
@@ -56,7 +56,7 @@ it.each([
       channelId: "channel",
       botId: "research",
       deliveryMode,
-      sessionMode,
+      historyMode,
       appendInbox,
       tools: [],
     },
@@ -67,10 +67,10 @@ it.each([
       botId: "research",
       groupName: "group",
       cronDeliveryMode: deliveryMode,
-      cronSessionMode: sessionMode,
+      cronHistoryMode: historyMode,
       configOverride: { tools: [] },
       sessionId:
-        deliveryMode === "direct" && sessionMode !== "per-run"
+        deliveryMode === "direct" && historyMode !== "fresh"
           ? "channel"
           : expect.stringMatching(/^cron-job-/),
     }),
@@ -101,7 +101,7 @@ it.each([
 it.each([
   undefined,
   "research",
-])("persists destination policy across queue restart for owner %s", async (botId) => {
+])("persists final-only history across queue restart for owner %s", async (botId) => {
   const dir = await mkdtemp(join(tmpdir(), "cron-context-"));
   const dbPath = join(dir, "runtime.sqlite");
   const repo = new QueueRepository(dbPath);
@@ -117,7 +117,7 @@ it.each([
         channelId: "channel",
         botId,
         deliveryMode: "direct",
-        sessionMode: "final-only",
+        historyMode: "final-only",
         appendInbox,
       },
       "prompt",
@@ -130,7 +130,7 @@ it.each([
     expect(reopened.get(jobId)).toMatchObject({
       groupName: "group",
       sessionId: "channel",
-      cronSessionMode: "final-only",
+      cronHistoryMode: "final-only",
     });
     expect(reopened.get(jobId)?.botId).toBe(botId);
   } finally {

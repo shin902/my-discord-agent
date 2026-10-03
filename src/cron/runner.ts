@@ -49,9 +49,9 @@ const CronJobSchema = z
     prompt: z.string().optional(),
     channelId: z.string().optional(),
     deliveryMode: z.enum(["direct", "new-thread", "item-thread"]).optional(),
-    sessionMode: z.enum(["per-run", "destination", "final-only"]).optional(),
+    historyMode: z.enum(["full", "final-only", "fresh"]).optional(),
     noReply: z.boolean().optional(),
-    // 後方互換。新規設定では deliveryMode/sessionMode を使用する。
+    // 後方互換。新規設定では deliveryMode/historyMode を使用する。
     mode: z.enum(["to-channel", "to-thread"]).optional(),
     handler: z.string().optional(),
     // group/channel と同じ AgentConfig fields。指定時は各フィールドを完全置換する。
@@ -62,27 +62,27 @@ const CronJobSchema = z
   .superRefine((job, ctx) => {
     const hasLegacyMode = job.mode != null;
     const hasDeliveryMode = job.deliveryMode != null;
-    const hasSessionMode = job.sessionMode != null;
-    if (hasLegacyMode && (hasDeliveryMode || hasSessionMode)) {
+    const hasHistoryMode = job.historyMode != null;
+    if (hasLegacyMode && (hasDeliveryMode || hasHistoryMode)) {
       ctx.addIssue({
         code: "custom",
-        message: "mode と deliveryMode/sessionMode は同時に指定できません",
+        message: "mode と deliveryMode/historyMode は同時に指定できません",
       });
-    } else if (hasDeliveryMode !== hasSessionMode) {
+    } else if (hasDeliveryMode !== hasHistoryMode) {
       ctx.addIssue({
         code: "custom",
-        message: "deliveryMode と sessionMode は両方指定してください",
+        message: "deliveryMode と historyMode は両方指定してください",
       });
     }
     if (
       job.deliveryMode === "item-thread" &&
-      job.sessionMode !== "destination" &&
-      job.sessionMode !== "final-only"
+      job.historyMode !== "full" &&
+      job.historyMode !== "final-only"
     ) {
       ctx.addIssue({
         code: "custom",
         message:
-          "item-thread は sessionMode=destination または final-only と組み合わせてください",
+          "item-thread は historyMode=full または final-only と組み合わせてください",
       });
     }
     if (job.schedule === "@startup" && job.handler != null) {
@@ -101,11 +101,11 @@ const CronJobSchema = z
         message: "handler なし時は groupName, prompt, channelId が必須です",
       });
     }
-    if (!hasLegacyMode && !hasDeliveryMode && !hasSessionMode) {
+    if (!hasLegacyMode && !hasDeliveryMode && !hasHistoryMode) {
       ctx.addIssue({
         code: "custom",
         message:
-          "handler なし時は deliveryMode, sessionMode が必須です（旧 mode も互換目的で利用可能）",
+          "handler なし時は deliveryMode, historyMode が必須です（旧 mode も互換目的で利用可能）",
       });
     }
   });

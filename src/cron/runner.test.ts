@@ -291,7 +291,7 @@ describe("cronジョブの configOverride", () => {
         prompt: "summarize",
         channelId: "ch",
         deliveryMode: "direct",
-        sessionMode: "per-run",
+        historyMode: "fresh",
         model: { provider: "zai", modelId: "glm-4.7-flash" },
         tools: ["bash"],
         toolSets: ["weather"],
@@ -317,7 +317,7 @@ describe("cronジョブの configOverride", () => {
     "direct",
     "new-thread",
     "item-thread",
-  ] as const)("accepts and enqueues destination final-only policy with %s delivery", async (deliveryMode) => {
+  ] as const)("accepts and enqueues final-only history with %s delivery", async (deliveryMode) => {
     const raw = [
       {
         id: "finals",
@@ -326,33 +326,37 @@ describe("cronジョブの configOverride", () => {
         channelId: "ch",
         prompt: "check",
         deliveryMode,
-        sessionMode: "final-only",
+        historyMode: "final-only",
       },
     ];
     const { mod, appendInboxMock } = await importRunnerWithMocks(raw);
     const [job] = await mod.loadAndValidateCron();
-    expect(job.sessionMode).toBe("final-only");
+    expect(job.historyMode).toBe("final-only");
     await mod.executeJob(job);
     expect(appendInboxMock).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         cronJobId: "finals",
-        cronSessionMode: "final-only",
+        cronHistoryMode: "final-only",
       }),
     );
     expect(appendInboxMock.mock.calls[0][0].configOverride).toBeUndefined();
   });
 
-  it("rejects an unknown sessionMode at config load", async () => {
+  it.each([
+    "unknown",
+    "destination",
+    "per-run",
+  ])("rejects unsupported historyMode %s at config load", async (historyMode) => {
     const { mod } = await importRunnerWithMocks([
       {
         id: "invalid-mode",
         schedule: "1h",
         handler: "jobs/session-cleanup.ts",
         deliveryMode: "direct",
-        sessionMode: "unknown",
+        historyMode,
       },
     ]);
-    await expect(mod.loadAndValidateCron()).rejects.toThrow(/sessionMode/);
+    await expect(mod.loadAndValidateCron()).rejects.toThrow(/historyMode/);
   });
 
   it('skills: "*" 付きジョブをスキーマで拒否する', async () => {
@@ -365,7 +369,7 @@ describe("cronジョブの configOverride", () => {
         prompt: "summarize",
         channelId: "ch",
         deliveryMode: "direct",
-        sessionMode: "per-run",
+        historyMode: "fresh",
         skills: "*",
       },
     ];
@@ -385,7 +389,7 @@ describe("cronジョブの configOverride", () => {
       prompt: "summarize",
       channelId: "ch",
       deliveryMode: "direct",
-      sessionMode: "per-run",
+      historyMode: "fresh",
       model: { provider: "zai", modelId: "glm-4.7-flash" },
       tools: ["get-current-weather"],
       approvalRequiredTools: ["get-current-weather"],
@@ -419,14 +423,14 @@ describe("cronジョブの configOverride", () => {
       prompt: "summarize",
       channelId: "ch",
       deliveryMode: "new-thread",
-      sessionMode: "destination",
+      historyMode: "full",
       tools: ["read"],
     });
 
     expect(appendInboxMock).toHaveBeenCalledWith(
       expect.objectContaining({
         cronDeliveryMode: "new-thread",
-        cronSessionMode: "destination",
+        cronHistoryMode: "full",
         cronJobId: "thread-summary",
         configOverride: { tools: ["read"] },
       }),
@@ -444,13 +448,13 @@ describe("cronジョブの configOverride", () => {
       prompt: "hello",
       channelId: "ch",
       deliveryMode: "direct",
-      sessionMode: "per-run",
+      historyMode: "fresh",
     });
 
     expect(appendInboxMock).toHaveBeenCalledOnce();
     expect(appendInboxMock.mock.calls[0][0]).not.toHaveProperty(
       "configOverride",
     );
-    expect(appendInboxMock.mock.calls[0][0].cronSessionMode).toBe("per-run");
+    expect(appendInboxMock.mock.calls[0][0].cronHistoryMode).toBe("fresh");
   });
 });

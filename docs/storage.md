@@ -58,7 +58,7 @@ runtime DBはWALを使用します。稼働中にmain fileだけをコピーし�
 
 `committed_conversations`はruntime schema v7で追加されます。既存のfenced結果commitと同一transactionで保存し、jobsへの削除連動FKは設けません。参照の自動削除期限はなく、source lifecycleに沿った明示的な廃棄まで保持します。通常queue retentionはこのtableを削除しません。既存成功jobやraw trajectoryからの参照backfillは行いません。
 
-runtime schema v10は採用参照にもnullableな `delivery_suppressed` を追加し、結果commitと同時に配信可否を保存します。queue retention後も `sessionMode: "final-only"` が配信抑制された結果を除外できます。既存行はNULLのまま保持し、final-only contextには採用しません（Memory exportの採用参照には従来どおり含まれます）。起動時の既存migration経路で追加され、session DB schemaはv6のままです。HostとRunner imageを同じcheckoutからbuildして再起動してください。
+runtime schema v10は採用参照にもnullableな `delivery_suppressed` を追加し、結果commitと同時に配信可否を保存します。queue retention後も `historyMode: "final-only"` が配信抑制された結果を除外できます。既存行はNULLのまま保持し、final-only contextには採用しません（Memory exportの採用参照には従来どおり含まれます）。起動時の既存migration経路で追加され、session DB schemaはv6のままです。HostとRunner imageを同じcheckoutからbuildして再起動してください。
 
 実データの調査は [runtime-dbスキル](../.pi/skills/runtime-db/SKILL.md) のread-only手順を使ってください。通常の完了・retention・recoveryを、JSONL行の削除やad-hoc SQLで代用しないでください。
 
@@ -101,7 +101,7 @@ source付きappendは同じwrite transaction内で `(agent_id, session_id, sourc
 
 append APIはgroup DB内でstableなentry IDを返します。Runnerは入力user / final assistantのIDをhostへ返し、runtimeの採用参照が確定した後、exporterは指定entry本文だけをread-onlyで取得します。ownerを指定したsession renameは複合FKのCASCADEでentry IDを変えず、参照のsession ID更新は不要です。旧履歴や存在しないDBを補完・作成しません。export / re-exportにはsession DBとruntime内の採用参照の両方をbackup・保持してください。group DBを削除・再作成する際はID再利用を避けるため古い採用参照を残さない運用が必要です。host / runnerの同時更新と旧方式からの移行制限は [Agent Memory export](agent-memory.md#attempt照合方式からのrollout) を参照してください。
 
-destination cron jobの [`sessionMode: "final-only"`](spec/cron.md#final-only-sessionmode) はsession DBを変更せず、`src/features/session-context/` が採用済み参照から同じowner/sessionのfinal本文だけをread-onlyで選び、汎用のprojected historyとしてsandboxへ渡します。raw trajectoryと初期snapshotは保持され、LLMへ渡す過去run履歴だけを置き換えます。finalとrunの対応は `committed_conversations.turn_id` とstable assistant entry IDで追跡できます。旧履歴の推測backfillは行いません。
+cron jobの [`historyMode: "final-only"`](spec/cron.md#final-only-historymode) はsession DBを変更せず、`src/features/session-context/` が採用済み参照から同じowner/sessionのfinal本文だけをread-onlyで選び、汎用のprojected historyとしてsandboxへ渡します。raw trajectoryと初期snapshotは保持され、LLMへ渡す過去run履歴だけを置き換えます。finalとrunの対応は `committed_conversations.turn_id` とstable assistant entry IDで追跡できます。旧履歴の推測backfillは行いません。
 
 runtimeの `conversationPath` はMainでは従来の `data/sessions/<group>/sessions.sqlite#session=<id>`、Bot ownerでは末尾に `&agent=<URLエンコードしたBot ID>` を付ける。既存の保存済みmetadataは書き換えない。
 

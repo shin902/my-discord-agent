@@ -80,7 +80,7 @@ export async function enqueueMail(
     {
       ...ctx,
       deliveryMode: "direct",
-      sessionMode: "per-run",
+      historyMode: "fresh",
       idempotencyKey: `mail:graph:${encodeURIComponent(ctx.id)}:${encodeURIComponent(emailId)}`,
       feature: { kind: "mail", input: mailInput.parse({ emailId, routeKey }) },
     },

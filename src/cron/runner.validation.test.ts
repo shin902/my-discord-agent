@@ -79,7 +79,7 @@ describe("loadAndValidateCron", () => {
           prompt: "p",
           channelId: "c",
           deliveryMode: "direct",
-          sessionMode: "destination",
+          historyMode: "full",
           approvalRequiredTools: ["get-current-weather"],
         },
       ]),
@@ -112,7 +112,7 @@ describe("loadAndValidateCron", () => {
           prompt: "p",
           channelId: "c",
           deliveryMode: "direct",
-          sessionMode: "per-run",
+          historyMode: "fresh",
         },
       ]),
     );
@@ -156,7 +156,7 @@ describe("loadAndValidateCron", () => {
       {
         id: "missing-fields",
         schedule: "* * * * *",
-        // groupName, prompt, channelId, deliveryMode, sessionMode がすべて不足
+        // groupName, prompt, channelId, deliveryMode, historyMode がすべて不足
       },
     ]);
     mockReadFile.mockResolvedValueOnce(cronJson);
@@ -272,7 +272,7 @@ describe("loadAndValidateCron", () => {
         prompt: "do something",
         channelId: "ch-123",
         deliveryMode: "direct",
-        sessionMode: "per-run",
+        historyMode: "fresh",
       },
     ]);
     mockReadFile.mockResolvedValueOnce(cronJson);
@@ -315,7 +315,7 @@ describe("loadAndValidateCron", () => {
             prompt: "do something",
             channelId: "ch-123",
             deliveryMode: "direct",
-            sessionMode: "per-run",
+            historyMode: "fresh",
             ...testCase,
           },
         ]),
@@ -361,7 +361,7 @@ describe("loadAndValidateCron", () => {
           prompt: "do something",
           channelId: "ch-123",
           deliveryMode: "direct",
-          sessionMode: "per-run",
+          historyMode: "fresh",
         },
       ]),
     );
@@ -384,7 +384,7 @@ describe("loadAndValidateCron", () => {
           prompt: "do something",
           channelId: "ch-123",
           deliveryMode: "direct",
-          sessionMode: "per-run",
+          historyMode: "fresh",
           tools: ["read"],
           approvalRequiredTools: [],
         },
@@ -404,7 +404,7 @@ describe("loadAndValidateCron", () => {
           prompt: "do something",
           channelId: "ch-123",
           deliveryMode: "direct",
-          sessionMode: "per-run",
+          historyMode: "fresh",
           mounts: [{ host: "repo", container: "/repo", readOnly: true }],
         },
       ]),
@@ -416,7 +416,7 @@ describe("loadAndValidateCron", () => {
     ]);
   });
 
-  it("item-thread + destination は検証に成功する", async () => {
+  it("item-thread + full は検証に成功する", async () => {
     mockReadFile.mockResolvedValueOnce(
       JSON.stringify([
         {
@@ -426,7 +426,7 @@ describe("loadAndValidateCron", () => {
           prompt: "summarize item",
           channelId: "ch-123",
           deliveryMode: "item-thread",
-          sessionMode: "destination",
+          historyMode: "full",
         },
       ]),
     );
@@ -449,7 +449,7 @@ describe("loadAndValidateCron", () => {
           ...job,
           schedule: "5m",
           deliveryMode: "item-thread",
-          sessionMode: "destination",
+          historyMode: "full",
           noReply: true,
         },
       ]),
@@ -458,7 +458,7 @@ describe("loadAndValidateCron", () => {
     await expect(loadAndValidateCron()).resolves.toHaveLength(1);
   });
 
-  it("item-thread は destination 以外のsessionModeを拒否する", async () => {
+  it("item-thread は fresh historyModeを拒否する", async () => {
     mockReadFile.mockResolvedValueOnce(
       JSON.stringify([
         {
@@ -468,21 +468,21 @@ describe("loadAndValidateCron", () => {
           prompt: "summarize item",
           channelId: "ch-123",
           deliveryMode: "item-thread",
-          sessionMode: "per-run",
+          historyMode: "fresh",
         },
       ]),
     );
 
     await expect(loadAndValidateCron()).rejects.toThrow(
-      "item-thread は sessionMode=destination または final-only と組み合わせてください",
+      "item-thread は historyMode=full または final-only と組み合わせてください",
     );
   });
 
-  it("deliveryMode/sessionMode の片方だけではエラーになる", async () => {
+  it("deliveryMode/historyMode の片方だけではエラーになる", async () => {
     mockReadFile.mockResolvedValueOnce(
       JSON.stringify([
         {
-          id: "missing-session-mode",
+          id: "missing-history-mode",
           schedule: "5m",
           groupName: "my-group",
           prompt: "do something",
@@ -495,11 +495,11 @@ describe("loadAndValidateCron", () => {
     await expect(loadAndValidateCron()).rejects.toThrow();
   });
 
-  it("handler付きジョブでもdeliveryMode/sessionModeの片方だけではエラーになる", async () => {
+  it("handler付きジョブでもdeliveryMode/historyModeの片方だけではエラーになる", async () => {
     mockReadFile.mockResolvedValueOnce(
       JSON.stringify([
         {
-          id: "handler-missing-session-mode",
+          id: "handler-missing-history-mode",
           schedule: "5m",
           handler: "jobs/rss-dispatch.ts",
           deliveryMode: "new-thread",
@@ -508,7 +508,7 @@ describe("loadAndValidateCron", () => {
     );
 
     await expect(loadAndValidateCron()).rejects.toThrow(
-      "deliveryMode と sessionMode は両方指定してください",
+      "deliveryMode と historyMode は両方指定してください",
     );
   });
 
@@ -523,7 +523,7 @@ describe("loadAndValidateCron", () => {
           channelId: "ch-123",
           mode: "to-channel",
           deliveryMode: "direct",
-          sessionMode: "per-run",
+          historyMode: "fresh",
         },
       ]),
     );
@@ -540,13 +540,13 @@ describe("loadAndValidateCron", () => {
           handler: "jobs/rss-dispatch.ts",
           mode: "to-thread",
           deliveryMode: "new-thread",
-          sessionMode: "destination",
+          historyMode: "full",
         },
       ]),
     );
 
     await expect(loadAndValidateCron()).rejects.toThrow(
-      "mode と deliveryMode/sessionMode は同時に指定できません",
+      "mode と deliveryMode/historyMode は同時に指定できません",
     );
   });
 

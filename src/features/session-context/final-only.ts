@@ -40,7 +40,7 @@ export function resolveSessionContext(
   input: InboxMessage,
   agentId: string,
 ): AgentMessage[] | undefined {
-  if (input.cronSessionMode !== "final-only") return undefined;
+  if (input.cronHistoryMode !== "final-only") return undefined;
   const references = [
     ...getQueueRepository().readCommittedConversations(input.groupName, {
       publicOnly: true,

@@ -41,7 +41,7 @@
     "prompt": "capturelog内の対象日 {{date}} の活動ログを分析して日次レポートを作成してください。",
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "new-thread",
-    "sessionMode": "per-run",
+    "historyMode": "fresh",
     "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
     "tools": ["read"]
   },

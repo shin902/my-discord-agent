@@ -35,7 +35,7 @@ data/cron/
     "prompt": "昨日のログを分析して日次レポートを作成してください",
     "channelId": "12345",
     "deliveryMode": "new-thread",
-    "sessionMode": "destination"
+    "historyMode": "full"
   }
 ]
 ```
@@ -52,13 +52,13 @@ data/cron/
     "groupName": "email",
     "channelId": "12345",
     "deliveryMode": "direct",
-    "sessionMode": "per-run",
+    "historyMode": "fresh",
     "handler": "jobs/mail.ts"
   }
 ]
 ```
 
-`handler` があるジョブは `prompt`・`channelId`・`deliveryMode`・`sessionMode` を省略可能。省略しない場合は `CronContext` 経由でハンドラーに渡される（Mailは `direct` + `per-run` に固定）。
+`handler` があるジョブは `prompt`・`channelId`・`deliveryMode`・`historyMode` を省略可能。省略しない場合は `CronContext` 経由でハンドラーに渡される（Mailは `direct` + `fresh` に固定）。
 
 ---
 
@@ -73,7 +73,7 @@ data/cron/
 | `prompt` | handler なし時必須 | string | エージェントへのプロンプト |
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
 | `deliveryMode` | handler なし時必須 | `"direct"` \| `"new-thread"` \| `"item-thread"` | Discordへの投稿方法（後述） |
-| `sessionMode` | handler なし時必須 | `"per-run"` \| `"destination"` \| `"final-only"` | セッションIDと継続contextの決定方法（後述） |
+| `historyMode` | handler なし時必須 | `"full"` \| `"final-only"` \| `"fresh"` | 過去の履歴をどう引き継ぐか（後述） |
 | `noReply` | オプション | boolean | `true`なら、このリクエストのsystem promptへ通知不要時に独立行 `<NO_REPLY>` を返す指示を追加。既定値は`false` |
 | `mode` | オプション | `"to-channel"` \| `"to-thread"` | 旧設定との後方互換用。新規設定では使用しない |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く） |
@@ -109,42 +109,42 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 
 ### 使い捨てcron sessionのcleanup
 
-`jobs/session-cleanup.ts` を毎日1回実行する設定例は `config/cron.example.json` を参照。LLMを起動せず、全groupのsession DBから `kind=cron-per-run` かつ最終更新から7日を超えたsessionを削除します。`session_entries` はcascadeで削除されます。cleanupはownerに限定せず `kind` と期限で選別します（作成ownerは `botId`、未指定なら `main`）。通常会話、destination cron、タグのない旧cron sessionは対象外です。削除したDBは `VACUUM` でファイル容量も回収します。圧縮に失敗した場合は警告を出し、他groupの削除を継続します。空きページが残っているDBは次回に圧縮を再試行します。圧縮中はDBの書き込みが待機するため、低負荷の時間帯に実行してください。削除した履歴は再参照・Memoryへの再exportができません。運用時はこのhandlerをcron設定に追加してください。
+`jobs/session-cleanup.ts` を毎日1回実行する設定例は `config/cron.example.json` を参照。LLMを起動せず、全groupのsession DBから `kind=cron-per-run` かつ最終更新から7日を超えたsessionを削除します。`session_entries` はcascadeで削除されます。cleanupはownerに限定せず `kind` と期限で選別します（作成ownerは `botId`、未指定なら `main`）。通常会話、`full` / `final-only` cron、タグのない旧cron sessionは対象外です。保存済み種別 `cron-per-run` は `fresh` のcleanup用タグとして維持します。削除したDBは `VACUUM` でファイル容量も回収します。圧縮に失敗した場合は警告を出し、他groupの削除を継続します。空きページが残っているDBは次回に圧縮を再試行します。圧縮中はDBの書き込みが待機するため、低負荷の時間帯に実行してください。削除した履歴は再参照・Memoryへの再exportができません。運用時はこのhandlerをcron設定に追加してください。
 
-### deliveryMode / sessionMode
+### deliveryMode / historyMode
 
-投稿方法とセッションID戦略は独立して指定する。すべての組み合わせで `appendInbox()` 経由の非同期処理となり、cron tick はadmission後にハンドラー完了やキューへの追加を待たず返る。
+投稿方法と過去履歴の引き継ぎ方は独立して指定する。すべての組み合わせで `appendInbox()` 経由の非同期処理となり、cron tick はadmission後にハンドラー完了やキューへの追加を待たず返る。
 
 | フィールド | 値 | 動作 |
 |---|---|---|
 | `deliveryMode` | `direct` | `channelId` が指すチャンネルまたは既存スレッドへ直接投稿する |
 | `deliveryMode` | `new-thread` | `channelId` を親チャンネルとして毎回新規スレッドを作成し、そこへ投稿する |
 | `deliveryMode` | `item-thread` | 一時sessionでAIを実行し、応答が存在する場合だけ親メッセージを投稿して、そのmessage IDへsessionを昇格してから1項目用スレッドを作成する |
-| `sessionMode` | `per-run` | 実行ごとに一意なセッションIDを生成する |
-| `sessionMode` | `destination` | 実際の投稿先チャンネルまたはスレッドIDをセッションIDとして使う |
-| `sessionMode` | `final-only` | `destination` と同じセッションIDを使い、過去公開finalだけを継続contextへ渡す |
+| `historyMode` | `full` | 配信先sessionを継続し、full historyを使う。実際の投稿先チャンネルまたはスレッドIDをセッションIDとして使う |
+| `historyMode` | `final-only` | `full` と同じセッションIDを使い、過去公開finalだけを継続contextへ渡す |
+| `historyMode` | `fresh` | 実行ごとに新しいsessionを使い、過去runの履歴を引き継がない |
 
 代表的な組み合わせ:
 
 | 設定 | 用途 |
 |---|---|
-| `direct` + `per-run` | 同じチャンネルまたは既存スレッドへ投稿するが、実行ごとの履歴は分離する |
-| `direct` + `destination` | 投稿先単位で履歴を継続する |
-| `new-thread` + `destination` | 毎回新規スレッドを作り、その後のユーザー返信でも履歴を継続する |
-| `new-thread` + `per-run` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
-| `item-thread` + `destination` | 1項目ごとに一時sessionでAIを実行し、通常応答がある場合だけ親メッセージと独立スレッドを作り、そのthread IDへsessionを昇格する。`item-thread` は `destination` または `final-only` 必須 |
+| `direct` + `fresh` | 同じチャンネルまたは既存スレッドへ投稿するが、実行ごとの履歴は分離する |
+| `direct` + `full` | 投稿先単位で履歴を継続する |
+| `new-thread` + `full` | 毎回新規スレッドを作り、その後のユーザー返信でも履歴を継続する |
+| `new-thread` + `fresh` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
+| `item-thread` + `full` | 1項目ごとに一時sessionでAIを実行し、通常応答がある場合だけ親メッセージと独立スレッドを作り、そのthread IDへsessionを昇格する。`item-thread` は `full` または `final-only` 必須 |
 
 `direct` / `new-thread` / `item-thread` は `final-only` とも組み合わせられる。
 
-item-thread昇格・rollbackは保存済みjobのownerを維持する。同じgroup・Bot owner・投稿先を使うchannel会話とdestination cronは履歴を共有し、異なるownerの履歴は分離する。
+item-thread昇格・rollbackは保存済みjobのownerを維持する。同じgroup・Bot owner・投稿先を使うchannel会話と `full` / `final-only` cronは保存先sessionを共有し、異なるownerの履歴は分離する。
 
-応答中にtrim後が完全一致する独立行 `<NO_REPLY>` があれば、通常会話、および`direct`/`new-thread`/`item-thread` cronは正常完了してDiscord deliveryを作らない。inlineの言及は通常どおり配送する。cronの`noReply: true`はこのプロトコルをsystem promptで案内するだけで、判定自体は常時有効である。`item-thread`はDiscord状態を応答後まで作らないため、NO_REPLY時は親メッセージもthreadも作成しない。Mail/RSS sourceは無配信でも正常にACK/finalizeする。Mail ACK失敗時は未読のまま次回cronで再取得し、RSS settle失敗時はclaimを解放して次回cronで再取得する。`new-thread` + `destination` はthread IDをAIセッションに使うため実行前にスレッドを作成し、NO_REPLY時も投稿のないスレッドが残る。
+応答中にtrim後が完全一致する独立行 `<NO_REPLY>` があれば、通常会話、および`direct`/`new-thread`/`item-thread` cronは正常完了してDiscord deliveryを作らない。inlineの言及は通常どおり配送する。cronの`noReply: true`はこのプロトコルをsystem promptで案内するだけで、判定自体は常時有効である。`item-thread`はDiscord状態を応答後まで作らないため、NO_REPLY時は親メッセージもthreadも作成しない。Mail/RSS sourceは無配信でも正常にACK/finalizeする。Mail ACK失敗時は未読のまま次回cronで再取得し、RSS settle失敗時はclaimを解放して次回cronで再取得する。`new-thread` + `full` はthread IDをAIセッションに使うため実行前にスレッドを作成し、NO_REPLY時も投稿のないスレッドが残る。
 
-旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。`mail.ts` はMail専用のroute keyを付け、常に `direct` + `per-run` でenqueueする。Discord deliveryはMail専用のthread mappingを使用する。
+旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `fresh`、`to-thread` は `new-thread` + `full` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。`mail.ts` はMail専用のroute keyを付け、常に `direct` + `fresh` でenqueueする。Discord deliveryはMail専用のthread mappingを使用する。
 
-### final-only sessionMode
+### final-only historyMode
 
-cron jobに `"sessionMode": "final-only"` を明示した場合、次runのLLM contextを初期context snapshot・同じ `(group, agent_id, sessionId)` の過去runの採用済み公開final・今回の入力に絞る。session IDは `destination` と同じ規則を使う。`per-run` / `destination` は従来のfull historyを維持する。未対応の値は起動時config errorになる。
+cron jobに `"historyMode": "final-only"` を明示した場合、次runのLLM contextを初期context snapshot・同じ `(group, agent_id, sessionId)` の過去runの採用済み公開final・今回の入力に絞る。session IDは `full` と同じ規則を使う。`full` は過去履歴全体を引き継ぎ、`fresh` は実行ごとに新しいsessionを使う。どちらもfinal-only projectionは行わず、同じrunのretryではraw historyを使う。未対応の値は起動時config errorになる。
 
 ```json
 {
@@ -153,12 +153,12 @@ cron jobに `"sessionMode": "final-only"` を明示した場合、次runのLLM c
   "groupName": "main",
   "channelId": "123",
   "deliveryMode": "direct",
-  "sessionMode": "final-only",
+  "historyMode": "final-only",
   "prompt": "未処理のGitHub PRを確認してください"
 }
 ```
 
-Mainとjobの `botId` で選択されたBotは共通contractを使う。jobのsessionModeは `enqueueCronInbox()` でqueue入力に保存し、pollerは保存済みmodeを使う。設定変更は再起動後の新規enqueueに適用し、受付済みqueueのpolicyは変えない。channel・group・Bot profileにはこの設定を設けず、通常のDiscord入力や同期 `bot run/resume`・`/bot` Taskには継承しない。handlerがenqueue時に `per-run` を選んだ場合はfull historyになる。既存のMail handlerは常に `per-run` を使うため対象外。
+Mainとjobの `botId` で選択されたBotは共通contractを使う。jobのhistoryModeは `enqueueCronInbox()` でqueue入力に保存し、pollerは保存済みmodeを使う。設定変更は再起動後の新規enqueueに適用し、受付済みqueueのpolicyは変えない。channel・group・Bot profileにはこの設定を設けず、通常のDiscord入力や同期 `bot run/resume`・`/bot` Taskには継承しない。handlerがenqueue時に `fresh` を選んだ場合は過去runの履歴を引き継がず、final-only projectionは行わない。既存のMail handlerは常に `fresh` を使うため対象外。
 
 初版は採用順に過去finalを全件引き継ぎ、件数/token上限やLLMによる要約は設けない。finalは成功結果commit時のassistant entry参照で識別し、非空textの `stop` / `length` 応答だけを使う。tool call/result、途中assistant、過去user/event、skill invocation、steering instructionは自動再注入しない。system prompt・contextFiles・保存済み初回Agent Memoryなどの初期snapshotは維持し、今回のskill invocationやsteerは通常どおり届く。
 
@@ -178,7 +178,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 `CronContext` に含めるもの:
 - Discord `client`
 - `appendInbox`
-- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `deliveryMode?`, `sessionMode?`, `noReply?`, `mode?`, `handler?`, `settings?`）を展開して渡す
+- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `deliveryMode?`, `historyMode?`, `noReply?`, `mode?`, `handler?`, `settings?`）を展開して渡す
 
 複数項目を扱うhandlerも、各項目を `enqueueCronInbox()` で登録する。`item-thread` ジョブは投入ごとに一時sessionを作り、AIが通常応答を返した後、delivery workerが親メッセージを投稿し、そのmessage/thread IDへsession DB上のidentityとruntime identityを昇格してからthreadを作成する。item-threadのsource照合や完了ACKはcron基盤では行わず、必要ならhandler側で扱う。
 
@@ -226,7 +226,7 @@ backendごとに1 jobを定義し、`settings`にbackend接続・eligible groups
 メールハンドラーは未読メールを取得し、Mail機能モジュールで本文・ACK対象のメールID・送信元・`List-Id`・件名から決定論的なmailRouteKeyとfeature入力を作ってinboxへ投入する（本文はroutingに使わない）。GitHubのPR件名 `(PR #number)` に対応し、PRのCI失敗通知は件名のコミットハッシュから関連PRを照会する。一意に特定できない場合は送信元routeを使い、APIエラー時は未読のまま再試行する。LLM sessionはメールごとに独立する。Mail機能がrouteのthread名とmapping（group・親channel・route単位）を所有し、共通Discord deliveryはthreadの解決・作成・送信だけを行う。Mailの `channelId` は既存threadではなく親Text Channelが必要。全delivery chunkが`sent`になった後にだけメールを既読化する。
 
 1. 未読メールを取得して本文を取得する。
-2. `enqueueCronInbox()` にメールIDとcron job ID + Graph message ID由来の冪等キー `mail:graph:<encoded-cron-job-id>:<encoded-message-id>` を付けてjobを投入する。各IDは区切り文字との衝突を避けるためURI encodeする。Mailは `direct` + `per-run` として処理される。同一cron job + 同一Graph messageはqueue jobがactive（`queued` / `retry_wait` / `claimed` / `running`）の間だけdedupeし、別cron jobは独立してenqueueできる。
+2. `enqueueCronInbox()` にメールIDとcron job ID + Graph message ID由来の冪等キー `mail:graph:<encoded-cron-job-id>:<encoded-message-id>` を付けてjobを投入する。各IDは区切り文字との衝突を避けるためURI encodeする。Mailは `direct` + `fresh` として処理される。同一cron job + 同一Graph messageはqueue jobがactive（`queued` / `retry_wait` / `claimed` / `running`）の間だけdedupeし、別cron jobは独立してenqueueできる。
 3. cron enqueue/pollerが設定された方式に従ってproviderのconcurrency設定とセッション順序を保ったままAIを実行し、delivery workerが投稿先を確定する。`item-thread` は一時sessionでAIを実行し、通常応答がある場合だけ親メッセージ→session昇格→thread作成の順でmaterializeする。
 4. AIが成功し、生成された全delivery chunkが`sent`になった後にだけ対象メールを既読化する。
 
@@ -235,6 +235,8 @@ queue jobがterminal（`completed` / `dead_letter`）ならdedupeせず、Graph�
 Graphの未読状態をsource側のretry signalとし、Agentのdead-letter、terminal delivery failure、配送後や明示的な配送抑止後のGraph ACK失敗でも通常のcron経路から再処理する。ACK専用state・worker・startup/runtime reconciliationは持たず、既存のqueue retry・delivery・配送後ACKを維持する。`completed` はAgent結果の保存完了であり、Discord配送完了とは別なので、配送待ちでもGraphが未読なら再enqueue可能。これはactive-only contractの境界であり、terminal後の再処理ではDiscord投稿が重複しうる。
 
 ## 運用メモ
+
+`historyMode` の設定・queue payloadを自動変換する互換経路はない。導入時は新surfaceへ設定を直接書き換え、旧runtimeで受付済みcron jobを完了させてから切り替える。session DBのidentityや保存済み種別は変更しない。
 
 ### config/cron.json の変更を反映するには再起動が必要
 

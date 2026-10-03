@@ -356,7 +356,7 @@ describe("processMessage - Bot execution resolution", () => {
           ? {
               cronJobId,
               cronDeliveryMode: "direct" as const,
-              cronSessionMode: "destination" as const,
+              cronHistoryMode: "full" as const,
             }
           : { routingChannelId: "parent" }),
         source: cron ? undefined : source,
@@ -487,7 +487,7 @@ describe("processMessage - terminal queue transitions", () => {
     const msg = makeMsg({
       sessionId: "thread-1",
       cronDeliveryMode: "item-thread",
-      cronSessionMode: "destination",
+      cronHistoryMode: "full",
       cronJobId: "item-job",
       cronProvisioning: false,
       cronThreadId: "thread-1",
@@ -511,7 +511,7 @@ describe("processMessage - terminal queue transitions", () => {
     const msg = makeMsg({
       sessionId: "thread-1",
       cronDeliveryMode: "item-thread",
-      cronSessionMode: "destination",
+      cronHistoryMode: "full",
       cronJobId: "item-job",
       cronProvisioning: false,
       cronThreadId: "thread-1",
@@ -772,7 +772,7 @@ describe("processMessage - terminal queue transitions", () => {
       botId,
       sessionId: "cron-daily-run-placeholder",
       cronDeliveryMode: "new-thread",
-      cronSessionMode: "destination",
+      cronHistoryMode: "full",
       cronJobId: "daily",
       timestamp: "2026-06-04T10:30:00.000Z",
     });
@@ -836,7 +836,7 @@ describe("processMessage - terminal queue transitions", () => {
       botId,
       sessionId: "cron-item-job-temporary",
       cronDeliveryMode: "item-thread",
-      cronSessionMode: "destination",
+      cronHistoryMode: "full",
       cronJobId: "item-job",
       cronProvisioning: true,
       cronNoReply: true,
@@ -882,7 +882,7 @@ describe("processMessage - terminal queue transitions", () => {
       botId,
       sessionId: "cron-daily-run-placeholder",
       cronDeliveryMode: "new-thread",
-      cronSessionMode: "per-run",
+      cronHistoryMode: "fresh",
       cronJobId: "daily",
     });
     vi.mocked(sendMessage).mockImplementation(
@@ -924,7 +924,7 @@ describe("processMessage - terminal queue transitions", () => {
     const msg = makeMsg({
       sessionId: "cron-daily-run-placeholder",
       cronDeliveryMode: "new-thread",
-      cronSessionMode: "destination",
+      cronHistoryMode: "full",
       cronJobId: "daily",
     });
     const create = vi.fn(async () => {
@@ -1084,7 +1084,7 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
       id: "rss-suppressed",
       cronJobId: "cron-rss",
       cronDeliveryMode: "direct",
-      cronSessionMode: "per-run",
+      cronHistoryMode: "fresh",
       idempotencyKey: dispatch.jobId,
       feature: {
         kind: "rss",
@@ -1131,7 +1131,7 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
       id: "rss-suppressed-after-mail",
       cronJobId: "cron-rss",
       cronDeliveryMode: "direct",
-      cronSessionMode: "per-run",
+      cronHistoryMode: "fresh",
       idempotencyKey: dispatch.jobId,
       feature: {
         kind: "rss",
@@ -1167,7 +1167,7 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
       id: "rss-suppressed-settle-failure",
       cronJobId: "cron-rss",
       cronDeliveryMode: "direct",
-      cronSessionMode: "per-run",
+      cronHistoryMode: "fresh",
       idempotencyKey: dispatch.jobId,
       feature: {
         kind: "rss",
@@ -1424,7 +1424,7 @@ describe("processMessage - allowMention", () => {
       botId,
       cronJobId: "finals",
       cronDeliveryMode: "direct",
-      cronSessionMode: "final-only",
+      cronHistoryMode: "final-only",
     });
     await processMessage(msg);
     expect(resolveSessionContext).toHaveBeenCalledExactlyOnceWith(
@@ -1609,7 +1609,7 @@ describe("processMessage - empty agent responses", () => {
     const msg = makeMsg({
       discordOutput: "none",
       channelId: "",
-      cronSessionMode: "per-run",
+      cronHistoryMode: "fresh",
     });
     const resolveCalls = getDiscordClientForGroupName.mock.calls.length;
     vi.mocked(sendMessage).mockImplementationOnce(
@@ -1681,7 +1681,7 @@ describe("processMessage - empty agent responses", () => {
       id: "cron-direct-empty",
       cronJobId: "cron-direct",
       cronDeliveryMode: "direct",
-      cronSessionMode: "per-run",
+      cronHistoryMode: "fresh",
     });
   });
 
@@ -1692,7 +1692,7 @@ describe("processMessage - empty agent responses", () => {
       id: "cron-new-thread-empty",
       cronJobId: "cron-new-thread",
       cronDeliveryMode: "new-thread",
-      cronSessionMode: "per-run",
+      cronHistoryMode: "fresh",
       cronThreadId: "thread-1",
     });
   });
@@ -1705,7 +1705,7 @@ describe("processMessage - empty agent responses", () => {
       sessionId: "cron-item-thread-temporary",
       cronJobId: "cron-item-thread",
       cronDeliveryMode: "item-thread",
-      cronSessionMode: "destination",
+      cronHistoryMode: "full",
       cronThread: true,
       cronProvisioning: true,
     });
@@ -2320,7 +2320,7 @@ describe("processMessage - durable result", () => {
       botId,
       cronJobId: "mail-check",
       cronDeliveryMode: "direct",
-      cronSessionMode: "per-run",
+      cronHistoryMode: "fresh",
       feature: { kind: "mail", input: { emailId: "mail-1" } },
     });
 
@@ -2379,7 +2379,7 @@ describe("processMessage - durable result", () => {
       id: "rss-empty-new-thread",
       cronJobId: "cron-rss",
       cronDeliveryMode: "new-thread",
-      cronSessionMode: "per-run",
+      cronHistoryMode: "fresh",
       idempotencyKey: dispatch.jobId,
       feature: {
         kind: "rss",

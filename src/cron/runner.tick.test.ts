@@ -28,7 +28,7 @@ function makeJob(id: string, schedule: string, prompt = id): CronJob {
     prompt,
     channelId: "c",
     deliveryMode: "direct",
-    sessionMode: "per-run",
+    historyMode: "fresh",
   };
 }
 

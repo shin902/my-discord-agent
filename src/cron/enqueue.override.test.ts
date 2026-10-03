@@ -42,7 +42,7 @@ describe("cron AgentConfig override", () => {
       groupName: "group",
       channelId: destinationId,
       deliveryMode: "direct" as const,
-      sessionMode: "per-run" as const,
+      historyMode: "fresh" as const,
       appendInbox,
     };
 
