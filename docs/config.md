@@ -223,7 +223,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `approvalRequiredTools` | — | AgentConfig。effective native `tools` とeffective `toolSets` の和集合に含まれる既知host/runtime capabilityのうち、承認を挟むtool名だけを指定する。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおり承認なし。子layerで未指定なら親を継承し、`[]` は明示解除。未知名・許可集合外・sandbox内toolは設定エラー。`skills` はこのvalidationに関与しない。子layerで指定した配列は完全置換 |
 | `allowMention` | — | 元メッセージへの reply 形式で送信し、返信先ユーザーに通知するか。省略時は返信するが通知しない |
 | `toolLogArgs` | — | ツール実行ログに引数を含めるか |
-| `skills` | — | AgentConfig。`groups/{name}/SKILLS/` から説明・workflowを公開するスキル名の配列、または文字列 `"*"`（配置済みSkillをすべて公開）。`["*"]` は無効で、group初期化時にエラーとなる。capabilityは付与しない。親を継承後も未指定、または `[]` ならスキルなし。channelで指定するとgroupの指定を完全置換 |
+| `skills` | — | AgentConfig。`groups/{name}/SKILLS/` から説明・workflowを公開するスキル名の配列、または文字列 `"*"`（配置済みSkillをすべて公開）。`["*"]` は無効。group設定では起動時にエラーとなり、channel / Bot profile設定ではその設定が実行時に適用される際にエラーとなる。capabilityは付与しない。親を継承後も未指定、または `[]` ならスキルなし。channelで指定するとgroupの指定を完全置換 |
 | `toolSets` | — | AgentConfig。trusted capability bundle名の配列。`agent-reach` / `arxiv-search` / `arxiv-survey` / `last30days` / `web` / `github` / `mail` / `calendar` / `weather`。native `tools` のhost/runtime capabilityとの和集合をrun authorityにする。Skill説明やnative schemaは追加しない。未指定なら親を継承、`[]` はbundle許可を解除、指定配列は完全置換。未知名と `"*"` は設定エラー |
 | `mounts` | — | AgentConfig。コンテナへの追加マウント設定。channelで指定するとgroupのmountsを完全置換 |
 | `agentMemory` | — | Group / Bot profile限定。`{ "enabled": true }` で有効化。未指定のGroupは無効、未指定のBotはGroupを継承。明示した `enabled` はboolean必須。Channel / cron jobでは指定不可。詳細は [Agent Memory](agent-memory.md#owner別markdownと新規sessionの初回選択) |
@@ -254,7 +254,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 }
 ```
 
-`skills: ["*"]` は無効です。配列要素はSkill名として処理され、`*` は許可された名前形式ではないため、group初期化時に `不正なスキル名` エラーとなり起動できません。`"*"` 形式でもcapabilityは付与されません。
+`skills: ["*"]` は無効です。配列要素はSkill名として検証され、`*` は許可された名前形式ではありません。group設定では起動時に `不正なスキル名` エラーとなり、channelまたはBot profileのoverrideでは、その有効設定がAgent実行に適用される時点で同じエラーになります。cron overrideではenqueue時の設定検証でエラーになります。`skills: "*"` 形式でもcapabilityは付与されません。
 
 ## groups/{name}/AGENTS.md
 
