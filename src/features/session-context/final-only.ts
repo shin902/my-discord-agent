@@ -2,7 +2,6 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ConversationEntries } from "../../agent/conversation.js";
 import { readSessionEntries } from "../../agent/session.js";
-import type { GroupConfig } from "../../config/groups.js";
 import { getQueueRepository } from "../../queue/repository.js";
 import type { InboxMessage } from "../../queue/types.js";
 
@@ -39,17 +38,9 @@ export function projectSessionContext(
 /** Undefined preserves full history; [] explicitly removes prior run traces. */
 export function resolveSessionContext(
   input: InboxMessage,
-  group: GroupConfig,
   agentId: string,
 ): AgentMessage[] | undefined {
-  if (
-    input.cronJobId ||
-    !input.routingChannelId ||
-    group.channels.find(
-      (channel) => channel.channelId === input.routingChannelId,
-    )?.sessionContext !== "final-only"
-  )
-    return undefined;
+  if (input.sessionContext !== "final-only") return undefined;
   const references = [
     ...getQueueRepository().readCommittedConversations(input.groupName, {
       publicOnly: true,

@@ -1,4 +1,9 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { QueueRepository } from "../queue/repository.js";
+import type { QueueProducer } from "../queue/types.js";
 
 vi.mock("../config/bots.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../config/bots.js")>()),
@@ -87,5 +92,67 @@ it.each([
       "prompt",
     ),
   ).rejects.toThrow(/Bot/);
+  expect(appendInbox).not.toHaveBeenCalled();
+});
+
+it.each([
+  undefined,
+  "research",
+])("persists destination policy across queue restart for owner %s", async (botId) => {
+  const dir = await mkdtemp(join(tmpdir(), "cron-context-"));
+  const dbPath = join(dir, "runtime.sqlite");
+  const repo = new QueueRepository(dbPath);
+  let jobId = "";
+  try {
+    const appendInbox: QueueProducer = (input) => {
+      jobId = repo.enqueue(input).job.id;
+    };
+    await enqueueCronInbox(
+      {
+        id: "job",
+        groupName: "group",
+        channelId: "channel",
+        botId,
+        deliveryMode: "direct",
+        sessionMode: "destination",
+        sessionContext: "final-only",
+        appendInbox,
+      },
+      "prompt",
+    );
+  } finally {
+    repo.close();
+  }
+  const reopened = new QueueRepository(dbPath);
+  try {
+    expect(reopened.get(jobId)).toMatchObject({
+      groupName: "group",
+      sessionId: "channel",
+      sessionContext: "final-only",
+      cronSessionMode: "destination",
+    });
+    expect(reopened.get(jobId)?.botId).toBe(botId);
+  } finally {
+    reopened.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("rejects a handler overriding destination to per-run before enqueue", async () => {
+  const appendInbox = vi.fn();
+  await expect(
+    enqueueCronInbox(
+      {
+        id: "job",
+        groupName: "group",
+        channelId: "channel",
+        deliveryMode: "direct",
+        sessionMode: "per-run",
+        sessionContext: "final-only",
+        appendInbox,
+      },
+      "prompt",
+    ),
+  ).rejects.toThrow(/sessionContext.*destination/);
   expect(appendInbox).not.toHaveBeenCalled();
 });

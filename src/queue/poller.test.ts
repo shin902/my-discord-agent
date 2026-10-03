@@ -1394,7 +1394,11 @@ describe("processMessage - allowMention", () => {
     mockSend.mockClear();
   });
 
-  it("attachments と configOverride を sendMessage に渡す", async () => {
+  it.each([
+    undefined,
+    "coding",
+  ])("cronのqueue policyから解決したhistoryとattachments/configOverrideをowner %sへ渡す", async (botId) => {
+    configureCronBot(botId);
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       bot: "secondary",
@@ -1414,12 +1418,19 @@ describe("processMessage - allowMention", () => {
     const historyMessages: NonNullable<SendMessageOptions["historyMessages"]> =
       [];
     resolveSessionContext.mockReturnValue(historyMessages);
-    const msg = makeMsg({ attachments, configOverride });
+    const msg = makeMsg({
+      attachments,
+      configOverride,
+      botId,
+      cronJobId: "finals",
+      cronDeliveryMode: "direct",
+      cronSessionMode: "destination",
+      sessionContext: "final-only",
+    });
     await processMessage(msg);
     expect(resolveSessionContext).toHaveBeenCalledExactlyOnceWith(
       msg,
-      expect.objectContaining({ name: "g" }),
-      "main",
+      botId ?? "main",
     );
 
     expect(sendMessage).toHaveBeenCalledWith(
@@ -1428,6 +1439,7 @@ describe("processMessage - allowMention", () => {
       "hello",
       expect.objectContaining({
         historyMessages,
+        agentId: botId ?? "main",
         onDiscordEvent: expect.any(Function),
         attachments,
         onExecutionTiming: expect.any(Function),

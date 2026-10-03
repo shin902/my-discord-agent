@@ -1151,11 +1151,7 @@ export async function processMessage(
               msg.content,
               {
                 agentId,
-                historyMessages: resolveSessionContext(
-                  msg,
-                  groupConfig,
-                  agentId,
-                ),
+                historyMessages: resolveSessionContext(msg, agentId),
                 imagePaths: images?.imagePaths,
                 onDiscordEvent: (event) => {
                   if (msg.discordOutput === "none") return;

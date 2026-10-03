@@ -15,6 +15,7 @@ import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
+import { SessionContextSchema } from "../features/session-context/config.js";
 
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueProducer } from "../queue/types.js";
@@ -50,6 +51,7 @@ const CronJobSchema = z
     channelId: z.string().optional(),
     deliveryMode: z.enum(["direct", "new-thread", "item-thread"]).optional(),
     sessionMode: z.enum(["per-run", "destination"]).optional(),
+    sessionContext: SessionContextSchema.optional(),
     noReply: z.boolean().optional(),
     // 後方互換。新規設定では deliveryMode/sessionMode を使用する。
     mode: z.enum(["to-channel", "to-thread"]).optional(),
@@ -82,6 +84,14 @@ const CronJobSchema = z
         code: "custom",
         message:
           "item-thread は sessionMode=destination と組み合わせてください",
+      });
+    }
+    if (job.sessionContext !== undefined && job.sessionMode !== "destination") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["sessionContext"],
+        message:
+          "sessionContext は sessionMode=destination と組み合わせてください",
       });
     }
     if (job.schedule === "@startup" && job.handler != null) {

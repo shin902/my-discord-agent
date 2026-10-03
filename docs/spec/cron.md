@@ -74,6 +74,7 @@ data/cron/
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
 | `deliveryMode` | handler なし時必須 | `"direct"` \| `"new-thread"` \| `"item-thread"` | Discordへの投稿方法（後述） |
 | `sessionMode` | handler なし時必須 | `"per-run"` \| `"destination"` | セッションIDの決定方法（後述） |
+| `sessionContext` | オプション | `"final-only"` | `sessionMode: "destination"` 限定。過去公開finalだけを継続contextへ渡す（後述） |
 | `noReply` | オプション | boolean | `true`なら、このリクエストのsystem promptへ通知不要時に独立行 `<NO_REPLY>` を返す指示を追加。既定値は`false` |
 | `mode` | オプション | `"to-channel"` \| `"to-thread"` | 旧設定との後方互換用。新規設定では使用しない |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く） |
@@ -139,6 +140,29 @@ item-thread昇格・rollbackは保存済みjobのownerを維持する。同じgr
 
 旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。`mail.ts` はMail専用のroute keyを付け、常に `direct` + `per-run` でenqueueする。Discord deliveryはMail専用のthread mappingを使用する。
 
+### sessionContext
+
+cron jobに `"sessionMode": "destination"` と `"sessionContext": "final-only"` を明示した場合、次runのLLM contextを初期context snapshot・同じ `(group, agent_id, sessionId)` の過去runの採用済み公開final・今回の入力に絞る。未指定は従来のfull history。`per-run` との併用、sessionMode未指定、未対応の値は起動時config errorになる。
+
+```json
+{
+  "id": "github-check",
+  "schedule": "*/10 * * * *",
+  "groupName": "main",
+  "channelId": "123",
+  "deliveryMode": "direct",
+  "sessionMode": "destination",
+  "sessionContext": "final-only",
+  "prompt": "未処理のGitHub PRを確認してください"
+}
+```
+
+Mainとjobの `botId` で選択されたBotは共通contractを使う。job設定は `enqueueCronInbox()` でqueue入力に保存し、pollerは保存済みpolicyを使う。設定変更は再起動後の新規enqueueに適用し、受付済みqueueのpolicyは変えない。channel・group・Bot profileにはこの設定を設けず、通常のDiscord入力や同期 `bot run/resume`・`/bot` Taskには継承しない。handlerがenqueue時に `per-run` を選んだ場合も、このpolicyとの併用は拒否する。既存のMail handlerは常に `per-run` を使うため対象外。
+
+初版は採用順に過去finalを全件引き継ぎ、件数/token上限やLLMによる要約は設けない。finalは成功結果commit時のassistant entry参照で識別し、非空textの `stop` / `length` 応答だけを使う。tool call/result、途中assistant、過去user/event、skill invocation、steering instructionは自動再注入しない。system prompt・contextFiles・保存済み初回Agent Memoryなどの初期snapshotは維持し、今回のskill invocationやsteerは通常どおり届く。
+
+失敗・キャンセル・finalなし・採用されなかったretryは除外する。`<NO_REPLY>` / `discordOutput: "none"` など配信を抑制した結果も含めない。「公開」は配送対象の成功結果として採用された時点を意味し、Discord配送完了は待たない。raw trajectoryは削除・圧縮・書き換えず保持する。識別参照や配信可否のmetadataがない旧履歴は推測して採用しない。[保存・移行](../storage.md#session-trajectory)も参照。
+
 ---
 
 ## TSバインドジョブのインターフェース
@@ -153,7 +177,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 `CronContext` に含めるもの:
 - Discord `client`
 - `appendInbox`
-- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `deliveryMode?`, `sessionMode?`, `noReply?`, `mode?`, `handler?`, `settings?`）を展開して渡す
+- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `deliveryMode?`, `sessionMode?`, `sessionContext?`, `noReply?`, `mode?`, `handler?`, `settings?`）を展開して渡す
 
 複数項目を扱うhandlerも、各項目を `enqueueCronInbox()` で登録する。`item-thread` ジョブは投入ごとに一時sessionを作り、AIが通常応答を返した後、delivery workerが親メッセージを投稿し、そのmessage/thread IDへsession DB上のidentityとruntime identityを昇格してからthreadを作成する。item-threadのsource照合や完了ACKはcron基盤では行わず、必要ならhandler側で扱う。
 

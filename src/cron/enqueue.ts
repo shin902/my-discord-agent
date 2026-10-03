@@ -8,6 +8,7 @@ import { pickAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import type { AgentConfig, SkillSelection } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
+import type { SessionContext } from "../features/session-context/config.js";
 import type { SourceEnvelope } from "../queue/source-handlers.js";
 import type {
   CronDeliveryMode,
@@ -31,6 +32,7 @@ export type CronEnqueueContext = {
   channelId?: string;
   deliveryMode?: CronDeliveryMode;
   sessionMode?: CronSessionMode;
+  sessionContext?: SessionContext;
   noReply?: boolean;
   mode?: "to-channel" | "to-thread";
   idempotencyKey?: string;
@@ -151,6 +153,9 @@ async function registerCronItemThread(
     ...(ctx.noReply ? { cronNoReply: true } : {}),
     cronThread: true,
     cronJobId: ctx.id,
+    ...(ctx.sessionContext !== undefined
+      ? { sessionContext: ctx.sessionContext }
+      : {}),
     cronProvisioning: true,
     idempotencyKey: key,
     ...(ctx.feature ? { feature: ctx.feature } : {}),
@@ -179,6 +184,11 @@ export async function enqueueCronInbox(
   }
 
   const { deliveryMode, sessionMode } = resolveModes(ctx);
+  if (ctx.sessionContext !== undefined && sessionMode !== "destination") {
+    throw new NonRetryableError(
+      "[cron-enqueue] sessionContext は sessionMode=destination と組み合わせてください",
+    );
+  }
   if (deliveryMode === "item-thread") {
     await registerCronItemThread(ctx, content);
     return;
@@ -203,6 +213,9 @@ export async function enqueueCronInbox(
     cronSessionMode: sessionMode,
     ...(ctx.noReply ? { cronNoReply: true } : {}),
     cronJobId: ctx.id,
+    ...(ctx.sessionContext !== undefined
+      ? { sessionContext: ctx.sessionContext }
+      : {}),
     ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : {}),
     ...(ctx.feature ? { feature: ctx.feature } : {}),
     ...(configOverride !== undefined ? { configOverride } : {}),

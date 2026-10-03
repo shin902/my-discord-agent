@@ -231,8 +231,6 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 有効な追加mountがある場合、Agentのsystem contextにはcontainer側pathと読み書き権限（`ro` / `rw`）を列挙し、既存mountの直接利用を促す。host側pathは表示しない。mount未設定時はこの案内を追加せず、作業ディレクトリは引き続き `/workspace` とする。
 
-`sessionContext: "final-only"` は `groups[].channels[]` だけで指定するopt-in設定です。未指定はfull historyを維持し、group直下の指定や未対応値は起動時に拒否します。適用範囲・旧履歴の扱いは [チャンネルモード](spec/channel-modes.md#sessioncontext) を参照してください。
-
 `sessionMode` の正本は [チャンネルモード](spec/channel-modes.md) を参照。通常のDiscord会話におけるAgentConfigの解決順は `group → Bot profile（指定時） → channel`、cron jobにおける解決順は `group → Bot profile（botId指定時） → cron job` である。`approvalRequiredTools` は他のAgentConfig配列と同様にfield単位で完全置換され、子layerで未指定なら親を継承し、`[]` は明示解除となる。既存mutation capabilityを自動的に必須化しない。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでもchannelのAgentConfigは継承しない。未指定フィールドは親を継承し、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` の暗黙加算やdeep mergeは行わない。したがって、groupやcron jobで `subagent` を許可していても、channelやcron jobが `tools` を完全置換してその名前を含めなければ、実行時にsubagent toolは公開されない。`allowMention` / `toolLogArgs` はgroup限定で、AgentConfigには含まれない。
 
 ### 起動時Discord履歴バックフィル
@@ -258,6 +256,8 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 - 利用可能なツール一覧は API 経由で自動注入されるため、テンプレートやグループ側の AGENTS.md にツール名を列挙しない（`config/groups.json` の変更やツール改名で内容が嘘になるため）。書くのは「どう振る舞うか」だけにする
 
 ## config/cron.json
+
+`sessionContext: "final-only"` は `sessionMode: "destination"` のcron jobだけで指定するopt-in設定です。未指定はfull historyを維持し、`per-run` との併用は起動時に拒否します。queueに保存されたpolicyを実行時に使用します。適用範囲・旧履歴の扱いは [cronのsessionContext](spec/cron.md#sessioncontext) を参照してください。
 
 定期実行ジョブの定義。トップレベルは配列。ファイル自体が存在しない場合も cron は空扱いで起動する（空配列の場合と同じ挙動）。
 詳細は `docs/spec/cron.md` を参照。
