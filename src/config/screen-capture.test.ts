@@ -16,12 +16,10 @@ describe("screen capture receiver config", () => {
       port: 8788,
     });
   });
+  // port範囲・型・未知キーはそれぞれ1つ代表だけ持つ（同一validatorの複製を避ける）。
   it.each([
     null,
-    { enabled: "true" },
-    { port: 0 },
     { port: 65536 },
-    { port: 8788.5 },
     { host: "0.0.0.0" },
   ])("fails closed: %j", async (config) => {
     vi.mocked(loadRawConfig).mockResolvedValue({
@@ -68,7 +66,7 @@ describe("screen capture daily summary config", () => {
     prompt: "{{date}}の日次レポート",
     channelId: "123",
   };
-  it("is opt-in and preserves agent and delivery overrides", async () => {
+  it("is opt-in and keeps cron routing overrides", async () => {
     vi.mocked(loadRawConfig).mockResolvedValue({});
     await expect(
       loadScreenCaptureDailySummaryConfig(),
@@ -76,15 +74,18 @@ describe("screen capture daily summary config", () => {
     vi.mocked(loadRawConfig).mockResolvedValue({
       screenCaptureDailySummary: {
         ...daily,
+        botId: "screen-capture",
         model: { provider: "google", modelId: "gemini-2.5-flash" },
         tools: ["read"],
-        deliveryMode: "new-thread",
+        deliveryMode: "item-thread",
+        sessionMode: "destination",
       },
     });
     await expect(loadScreenCaptureDailySummaryConfig()).resolves.toMatchObject({
       ...daily,
-      sessionMode: "per-run",
-      deliveryMode: "new-thread",
+      botId: "screen-capture",
+      sessionMode: "destination",
+      deliveryMode: "item-thread",
       tools: ["read"],
       model: { provider: "google", modelId: "gemini-2.5-flash" },
     });
@@ -95,14 +96,12 @@ describe("screen capture daily summary config", () => {
       loadScreenCaptureDailySummaryConfig(),
     ).resolves.toBeUndefined();
   });
+  // 空文字やenum不正はZod側の共通制約なので、feature固有の契約だけ残す。
   it.each([
-    { startDate: "2026-02-30" },
-    { startDate: "today" },
-    { prompt: " " },
-    { channelId: "" },
-    { deliveryMode: "item-thread" },
-    { sessionMode: "invalid" },
-    { schedule: "0 9 * * *" },
+    { startDate: "2026-02-30" }, // SQL比較が前提とする実在するISO日付
+    { channelId: "" }, // 出力先は必須
+    { deliveryMode: "item-thread" }, // default の per-run とは組めない
+    { schedule: "0 9 * * *" }, // cron job用のフィールドは受け付けない
   ])("rejects invalid daily configuration: %j", async (override) => {
     vi.mocked(loadRawConfig).mockResolvedValue({
       screenCaptureDailySummary: { ...daily, ...override },

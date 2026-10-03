@@ -1,4 +1,8 @@
 import type { Server } from "node:http";
+import { resolveAgentConfig } from "../config/agent-resolution.js";
+import { validateApprovalRequiredTools } from "../config/agent-validation.js";
+import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
+import { findGroupByName } from "../config/groups.js";
 import {
   loadScreenCaptureDailySummaryConfig,
   loadScreenCaptureReceiverConfig,
@@ -30,6 +34,21 @@ export async function startScreenCapture(
     throw new Error(
       "screenCaptureDailySummary requires enabled screenCaptureSummary with the same groupName",
     );
+  // enqueueCronInbox only resolves botId when a day closes, so a missing or
+  // cross-group Bot would be logged and swallowed. Validate the effective
+  // AgentConfig at startup through the same layers loadAndValidateCron() uses.
+  if (daily) {
+    const profile = daily.botId
+      ? resolveBotProfile(await loadBotRegistry(), daily.botId, daily.groupName)
+      : undefined;
+    validateApprovalRequiredTools(
+      resolveAgentConfig(
+        await findGroupByName(daily.groupName),
+        profile,
+        daily,
+      ),
+    );
+  }
   const consume = summary ? createSummaryConsumer(summary, daily) : undefined;
   registerScreenCaptureSource(sources, getQueueRepository(), (groupName) => {
     if (groupName === summary?.groupName) consume?.();
