@@ -61,6 +61,14 @@ describe("resolveModel", () => {
         contextWindow: 1,
         maxTokens: 1,
         reasoning: false,
+        models: {
+          "fixture-codex": {
+            contextWindow: 2,
+            maxTokens: 2,
+            input: ["text"],
+            thinkingLevelMap: { off: "none" },
+          },
+        },
       },
     ]);
     vi.stubEnv("CREDENTIAL_PROXY_JSON", sandbox ? "[]" : "");
@@ -207,6 +215,81 @@ describe("resolveModel", () => {
     expect(textModel.input).toEqual(["text"]);
   });
 
+  it("モデル単位の上書き、provider fallback、現行デフォルトを解決する", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    const { CredentialEntrySchema } = await vi.importActual<
+      typeof import("../config/credential-proxy.js")
+    >("../config/credential-proxy.js");
+    vi.mocked(getProviders).mockReturnValue([]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      CredentialEntrySchema.parse({
+        provider: "local",
+        baseUrl: "http://localhost:8080/v1",
+        api: "openai-completions",
+        contextWindow: 128000,
+        maxTokens: 12800,
+        compat: {
+          thinkingFormat: "openrouter",
+          thinkingLevelMap: { off: "none", low: "low", xhigh: "high" },
+        },
+        models: {
+          vision: {
+            input: ["text", "image"],
+            contextWindow: 262144,
+            maxTokens: 8192,
+            thinkingLevelMap: { off: "disabled", high: "enabled" },
+          },
+          text: { contextWindow: 65536 },
+          inherited: { input: ["text", "image"] },
+        },
+      }),
+      CredentialEntrySchema.parse({
+        provider: "defaults",
+        baseUrl: "http://localhost:8080/v1",
+        api: "openai-completions",
+        models: { overridden: { maxTokens: 1024 } },
+      }),
+    ]);
+
+    const vision = await resolveModel("local", "vision");
+    expect(vision).toMatchObject({
+      input: ["text", "image"],
+      contextWindow: 262144,
+      maxTokens: 8192,
+      thinkingLevelMap: { off: "disabled", high: "enabled" },
+      compat: { thinkingFormat: "openrouter" },
+    });
+    expect(vision.thinkingLevelMap).toEqual({
+      off: "disabled",
+      high: "enabled",
+    });
+    expect(vision.compat).toEqual({ thinkingFormat: "openrouter" });
+    for (const [modelId, contextWindow, input] of [
+      ["text", 65536, ["text"]],
+      ["inherited", 128000, ["text", "image"]],
+      ["unlisted", 128000, ["text"]],
+    ] as const) {
+      expect(await resolveModel("local", modelId)).toMatchObject({
+        input,
+        contextWindow,
+        maxTokens: 12800,
+        thinkingLevelMap: { off: "none", low: "low", xhigh: "high" },
+      });
+    }
+    const defaults = await resolveModel("defaults", "unlisted");
+    expect(defaults.contextWindow).toBe(128000);
+    expect(defaults.maxTokens).toBe(4096);
+    expect(defaults.thinkingLevelMap).toBeUndefined();
+    expect(await resolveModel("defaults", "overridden")).toMatchObject({
+      contextWindow: 128000,
+      maxTokens: 1024,
+    });
+  });
+
   it("別名のカスタムプロバイダーは組み込みmodelId以外も解決する", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders } = await import("@earendil-works/pi-ai/compat");
@@ -290,6 +373,9 @@ describe("resolveModel", () => {
         provider: "custom-anthropic",
         baseUrl: "http://localhost:9090/v1",
         api: "anthropic-messages",
+        models: {
+          "some-model": { thinkingLevelMap: { off: "disabled" } },
+        },
         compat: {
           thinkingFormat: "openai",
           thinkingLevelMap: { off: "none" },

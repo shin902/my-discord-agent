@@ -35,14 +35,19 @@ function createCustomModel(
   modelId: string,
 ): Model<Api> {
   const api = entry.api ?? "openai-completions";
+  const override = entry.models?.[modelId];
   // compat は pi-ai の OpenAI 互換ストリームレイヤー専用のフィールドなので、
   // api が openai-completions 以外の場合は付与しない
   const thinkingFormat =
     api === "openai-completions" ? entry.compat?.thinkingFormat : undefined;
   // thinkingLevelMap は pi-ai の Model 型ではトップレベルのフィールドなので、
   // entry.compat からは除外して compat に渡す
-  const { thinkingLevelMap, ...entryCompatRest } =
+  const { thinkingLevelMap: entryThinkingLevelMap, ...entryCompatRest } =
     api === "openai-completions" ? (entry.compat ?? {}) : {};
+  const thinkingLevelMap =
+    api === "openai-completions"
+      ? (override?.thinkingLevelMap ?? entryThinkingLevelMap)
+      : undefined;
   // reasoning: false を明示した場合は thinking を完全に無効化するため compat も除外する
   const compat: Model<"openai-completions">["compat"] | undefined =
     entry.reasoning !== false && entry.compat && thinkingFormat !== undefined
@@ -59,15 +64,15 @@ function createCustomModel(
     baseUrl,
     reasoning: entry.reasoning ?? Boolean(compat?.thinkingFormat),
     ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
-    input: entry.models?.[modelId]?.input ?? ["text"],
+    input: override?.input ?? ["text"],
     cost: {
       input: 0,
       output: 0,
       cacheRead: 0,
       cacheWrite: 0,
     },
-    contextWindow: entry.contextWindow ?? 128000,
-    maxTokens: entry.maxTokens ?? 4096,
+    contextWindow: override?.contextWindow ?? entry.contextWindow ?? 128000,
+    maxTokens: override?.maxTokens ?? entry.maxTokens ?? 4096,
     ...(compat ? { compat } : {}),
   } as Model<Api>;
 }

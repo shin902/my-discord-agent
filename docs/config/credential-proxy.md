@@ -91,9 +91,12 @@ sandboxでは接続先の `baseUrl` をホストから渡された Credential Pr
 |---|---|
 | `api` | 組み込み以外のproviderでは必須。OpenAI互換APIなら `openai-completions` を指定 |
 | `reasoning` | 明示値を優先。省略時は有効な `compat.thinkingFormat` の有無で決定 |
-| `contextWindow` | 正の整数。省略時128000 |
-| `maxTokens` | 正の整数。省略時4096 |
+| `contextWindow` | 正の整数。モデル側で未指定の場合のfallback。省略時128000 |
+| `maxTokens` | 正の整数。モデル側で未指定の場合のfallback。省略時4096 |
 | `models[modelId].input` | `text` / `image` の配列。省略時は `["text"]` |
+| `models[modelId].contextWindow` | 正の整数。`models[modelId]` → entry → 128000 の順で解決 |
+| `models[modelId].maxTokens` | 正の整数。`models[modelId]` → entry → 4096 の順で解決 |
+| `models[modelId].thinkingLevelMap` | 下記のmappingと同じ形式。`compat.thinkingLevelMap` より優先（OpenAI completionsのみ） |
 | `compat` | 下記のOpenAI completions互換設定 |
 
 `api` のschema上の許容値は `openai-completions`、`openai-responses`、`azure-openai-responses`、`openai-codex-responses`、`anthropic-messages`、`mistral-conversations`、`bedrock-converse-stream`、`google-generative-ai`、`google-vertex` です。許容値であることは、任意のupstream・認証形式で動作する保証ではありません。
@@ -110,20 +113,31 @@ sandboxでは接続先の `baseUrl` をホストから渡された Credential Pr
 
 `thinkingFormat` の名前による自動補正は行いません。`qwen` / `ollama` は許容値ではありません。`reasoning: false` を明示するか、`thinkingFormat` がない場合、modelの `compat` 自体は付与されません。`thinkingLevelMap` は `compat` から分離してmodelのトップレベルへ渡されます。
 
+モデル単位では `models[modelId].thinkingLevelMap` に指定します。モデル側のmapがあれば **map全体を置換** し、provider側のmapとキー単位ではmergeしません。モデル側で未指定なら `compat.thinkingLevelMap`、両方未指定ならpi-aiの現行mapping挙動を維持します。任意キーを省略したときの扱いもpi-aiへ委譲します。`thinkingFormat` はentry単位のままで、モデル単位のoverrideはありません。これらのoverrideはカスタムモデルだけに適用され、組み込みモデルのmetadataは変更しません。
+
 実際に選ぶthinkingLevelはAgentConfigの `model.thinkingLevel` で、`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`を指定できます。runnerの省略時は `off` です。組み込みモデルのmappingはPiのmodel metadataへ委譲し、サーバーへ送られる形式や効果はAPI・モデル・compatに依存します。thinkingLevelごとの固定トークン予算を全provider共通の保証として扱わないでください。
 
 ### カスタムモデルの例
 
 ```json
 {
-  "provider": "local-qwen",
+  "provider": "local-models",
   "baseUrl": "http://localhost:8080/v1",
   "api": "openai-completions",
   "contextWindow": 65536,
   "maxTokens": 4096,
-  "compat": { "thinkingFormat": "qwen-chat-template" },
+  "compat": {
+    "thinkingFormat": "openrouter",
+    "thinkingLevelMap": { "off": "none", "high": "high" }
+  },
   "models": {
-    "vision-model": { "input": ["text", "image"] }
+    "vision-model": {
+      "input": ["text", "image"],
+      "contextWindow": 131072,
+      "maxTokens": 8192,
+      "thinkingLevelMap": { "off": "none", "high": "medium" }
+    },
+    "text-model": { "input": ["text"] }
   }
 }
 ```

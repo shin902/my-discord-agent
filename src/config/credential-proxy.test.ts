@@ -203,6 +203,35 @@ describe("loadCredentialProxy", () => {
     ]);
   });
 
+  it.each([
+    ["contextWindow", 0],
+    ["contextWindow", -1],
+    ["contextWindow", 1.5],
+    ["contextWindow", "65536"],
+    ["maxTokens", 0],
+    ["maxTokens", -1],
+    ["maxTokens", 1.5],
+    ["maxTokens", "4096"],
+    ["thinkingLevelMap", { high: "high" }],
+    ["thinkingLevelMap", { off: "none", low: 1 }],
+  ])("モデル単位の不正な %s (%j) を拒否する", async (field, value) => {
+    const { CredentialEntrySchema } = await importFresh();
+    const parsed = CredentialEntrySchema.safeParse({
+      provider: "local",
+      baseUrl: "http://localhost:8080/v1",
+      api: "openai-completions",
+      models: { model: { [field]: value } },
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues[0].path.slice(0, 3)).toEqual([
+        "models",
+        "model",
+        field,
+      ]);
+    }
+  });
+
   it("query-token 認証設定を受け付ける", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(
