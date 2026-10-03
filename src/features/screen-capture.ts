@@ -1,4 +1,5 @@
 import type { Server } from "node:http";
+import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import {
   loadScreenCaptureDailySummaryConfig,
   loadScreenCaptureReceiverConfig,
@@ -30,6 +31,12 @@ export async function startScreenCapture(
     throw new Error(
       "screenCaptureDailySummary requires enabled screenCaptureSummary with the same groupName",
     );
+  // enqueueCronInbox only resolves botId when a day closes, so an unknown or
+  // cross-group Bot would be logged and swallowed. Resolve it at startup like
+  // loadAndValidateCron() does for cron jobs.
+  if (daily?.botId) {
+    resolveBotProfile(await loadBotRegistry(), daily.botId, daily.groupName);
+  }
   const consume = summary ? createSummaryConsumer(summary, daily) : undefined;
   registerScreenCaptureSource(sources, getQueueRepository(), (groupName) => {
     if (groupName === summary?.groupName) consume?.();
