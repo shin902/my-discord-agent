@@ -223,7 +223,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `approvalRequiredTools` | — | AgentConfig。effective native `tools` とeffective `toolSets` の和集合に含まれる既知host/runtime capabilityのうち、承認を挟むtool名だけを指定する。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおり承認なし。子layerで未指定なら親を継承し、`[]` は明示解除。未知名・許可集合外・sandbox内toolは設定エラー。`skills` はこのvalidationに関与しない。子layerで指定した配列は完全置換 |
 | `allowMention` | — | 元メッセージへの reply 形式で送信し、返信先ユーザーに通知するか。省略時は返信するが通知しない |
 | `toolLogArgs` | — | ツール実行ログに引数を含めるか |
-| `skills` | — | AgentConfig。`groups/{name}/SKILLS/` から説明・workflowを公開するスキル名の配列。capabilityは付与しない。親を継承後も未指定、または `[]` ならスキルなし。channelで指定するとgroupの指定を完全置換 |
+| `skills` | — | AgentConfig。`groups/{name}/SKILLS/` から説明・workflowを公開するスキル名の配列、または文字列 `"*"`。`"*"` は配置済みSkillをすべて公開する。capabilityは付与しない。親を継承後も未指定、または `[]` ならスキルなし。channelで指定するとgroupの指定を完全置換 |
 | `toolSets` | — | AgentConfig。trusted capability bundle名の配列。`agent-reach` / `arxiv-search` / `arxiv-survey` / `last30days` / `web` / `github` / `mail` / `calendar` / `weather`。native `tools` のhost/runtime capabilityとの和集合をrun authorityにする。Skill説明やnative schemaは追加しない。未指定なら親を継承、`[]` はbundle許可を解除、指定配列は完全置換。未知名と `"*"` は設定エラー |
 | `mounts` | — | AgentConfig。コンテナへの追加マウント設定。channelで指定するとgroupのmountsを完全置換 |
 | `agentMemory` | — | Group / Bot profile限定。`{ "enabled": true }` で有効化。未指定のGroupは無効、未指定のBotはGroupを継承。明示した `enabled` はboolean必須。Channel / cron jobでは指定不可。詳細は [Agent Memory](agent-memory.md#owner別markdownと新規sessionの初回選択) |
@@ -245,7 +245,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 `skills` と権限設定 `toolSets` は独立です。Skillの内容・存在・hashをauthority sourceにしません。旧Skill名からの暗黙grantは削除したため、既存の `agent-reach` / `arxiv-search` / `arxiv-survey` / `last30days` Skillには同名の `toolSets` を明示してください。`web` は複数のWeb系capabilityをまとめて許可するumbrellaです。bundle内容とdescribe操作は [Tool Runtime仕様](spec/tool-runtime.md#runの権限と提示) を参照してください。
 
-`skills` は安全側に倒し、キー自体を省略した場合もスキルはロードしない。`groups/{name}/SKILLS/` に配置されているだけのスキルは公開されず、利用するスキル名を配列で明示する。
+`skills` はキー自体を省略するか `[]` を指定するとスキルをロードしない。利用するスキル名を配列で明示するか、文字列 `"*"` で `groups/{name}/SKILLS/` に配置されたすべてのSkillを公開する。配列内の `"*"` はワイルドカードではなく、文字列 `"*"` と一致する名前のSkillを選択する。どちらの指定もcapabilityを付与しない。
 
 ## groups/{name}/AGENTS.md
 
@@ -305,7 +305,7 @@ cronの `historyMode` は過去の履歴の引き継ぎ方を指定します。`
 
 既存スレッドへ投稿しつつ毎回セッションを分離する場合は、`channelId` にスレッドID、`deliveryMode` に `direct`、`historyMode` に `fresh` を指定する。`item-thread` は1項目ごとの独立スレッドを使うため `full` または `final-only` と組み合わせる。旧 `mode` も後方互換のため読み込めるが、新しい設定では使用しない。`to-channel` は `direct` + `fresh`、`to-thread` は `new-thread` + `full` として扱われる。
 
-`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` を任意で指定すると、`group → Bot profile（botId指定時） → cron job` の順でそのジョブの実行時設定を解決する。cronの `channelId` は配送先だけを表し、配送先channelまたは既存threadのAgentConfig・Bot指定は継承しない。`skills` はスキル名の配列または `[]` を指定できる。指定フィールドは完全置換で、モデルオブジェクトや配列のdeep merge・暗黙加算は行わない。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。`allowMention` / `toolLogArgs` はgroup設定のみで、cron jobからは変更できない。
+`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` を任意で指定すると、`group → Bot profile（botId指定時） → cron job` の順でそのジョブの実行時設定を解決する。cronの `channelId` は配送先だけを表し、配送先channelまたは既存threadのAgentConfig・Bot指定は継承しない。`skills` はスキル名の配列、`[]`、または文字列 `"*"`（配置済みSkillすべて）を指定できる。指定フィールドは完全置換で、モデルオブジェクトや配列のdeep merge・暗黙加算は行わない。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。`allowMention` / `toolLogArgs` はgroup設定のみで、cron jobからは変更できない。
 
 ### jobs/mail.ts
 

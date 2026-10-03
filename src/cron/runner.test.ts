@@ -359,7 +359,7 @@ describe("cronジョブの configOverride", () => {
     await expect(mod.loadAndValidateCron()).rejects.toThrow(/historyMode/);
   });
 
-  it('skills: "*" 付きジョブをスキーマで拒否する', async () => {
+  it('skills: "*" 付きジョブをスキーマで受け入れる', async () => {
     const raw = [
       {
         id: "all-skills-summary",
@@ -375,7 +375,9 @@ describe("cronジョブの configOverride", () => {
     ];
     const { mod } = await importRunnerWithMocks(raw);
 
-    await expect(mod.loadAndValidateCron()).rejects.toThrow();
+    await expect(mod.loadAndValidateCron()).resolves.toMatchObject([
+      { skills: "*" },
+    ]);
   });
 
   it("executeJob は上書きがあると appendInbox に configOverride を渡す", async () => {
