@@ -289,6 +289,82 @@ describe("non-destructive session context maintenance", () => {
   });
 
   it.each([
+    1999, 2000, 2001, 100_000,
+  ])("bounds each old tool result in the summary input without truncating raw history (%s characters)", async (length) => {
+    const toolText = "log-content\n"
+      .repeat(Math.ceil(length / 12))
+      .slice(0, length);
+    const toolResult: AgentMessage = {
+      role: "toolResult",
+      toolCallId: "old-call",
+      toolName: "read",
+      content: [
+        { type: "text", text: toolText },
+        {
+          type: "image",
+          data: "c2VjcmV0LWltYWdlLWJ5dGVz",
+          mimeType: "image/png",
+        },
+      ],
+      isError: false,
+      timestamp: 3,
+    };
+    await seed([
+      user("Never delete /workspace/exact-file; preserve ID=98765"),
+      {
+        ...assistant("Decision: keep the original file"),
+        content: [
+          { type: "text", text: "Decision: keep the original file" },
+          {
+            type: "toolCall",
+            id: "old-call",
+            name: "read",
+            arguments: { path: "/workspace/exact-file" },
+          },
+        ],
+        stopReason: "toolUse",
+      } as AgentMessage,
+      toolResult,
+      assistant("Read completed"),
+      user("Recent request"),
+      assistant("Recent answer"),
+    ]);
+    await run("compact");
+    const prompt = execute.mock.calls[0][0].prompt as string;
+    expect(prompt).toContain(
+      "[User]: Never delete /workspace/exact-file; preserve ID=98765",
+    );
+    expect(prompt).toContain("[Assistant]: Decision: keep the original file");
+    expect(prompt).toContain(
+      '[Assistant tool calls]: read({"path":"/workspace/exact-file"})',
+    );
+    expect(prompt).toContain(`[Tool result]: ${toolText.slice(0, 2000)}`);
+    if (toolText.length > 2000)
+      expect(prompt).toContain(
+        `[... ${toolText.length - 2000} more characters truncated]`,
+      );
+    else expect(prompt).not.toContain("more characters truncated");
+    expect(prompt.length).toBeLessThan(3000);
+    for (const metadata of [
+      '"usage"',
+      '"cost"',
+      '"model"',
+      '"toolCallId"',
+      '"mimeType"',
+      "c2VjcmV0LWltYWdlLWJ5dGVz",
+    ])
+      expect(prompt).not.toContain(metadata);
+    const archived = await sessions.loadMessages(
+      group,
+      compaction.contextArchiveId("channel", "operation-1"),
+      "main",
+    );
+    expect(archived.find((message) => message.role === "toolResult")).toEqual(
+      toolResult,
+    );
+  });
+
+  it.each([
     "clear",
     "compact",
   ] as const)("rejects manual %s on protected sessions without altering history", async (action) => {

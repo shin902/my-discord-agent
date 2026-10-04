@@ -31,7 +31,7 @@ Piの実装を参考に、文字数/4と画像の固定コストでtoken数を�
 
 ## 圧縮と保存
 
-要約は `Goal / User Constraints / Current State / Important Facts / Decisions / Artifacts / Open Loops / Next Steps / Recall` の固定見出しを使う。ユーザーの条件・禁止事項・決定・正確なID/数値/URLを圧縮率より優先する。要約生成はtoolなしで行い、元の会話を継続しない。画像bytesは要約用JSONから除外する。要約中の `/steer` は受け付けず、`/stop` による中止は可能。
+要約は `Goal / User Constraints / Current State / Important Facts / Decisions / Artifacts / Open Loops / Next Steps / Recall` の固定見出しを使う。ユーザーの条件・禁止事項・決定・正確なID/数値/URLを圧縮率より優先する。要約生成はtoolなしで行い、元の会話を継続しない。要約入力はPiに近いテキスト形式にし、user/assistantの本文とtool名・引数を渡す。各tool resultは先頭2,000文字までに制限し、超過量を明示する。usage・cost等のメタデータや画像bytesは渡さない。この切り詰めは要約入力だけに適用し、保存rawとrecent verbatimは変更しない。入力全体の上限を保証するものではない。要約中の `/steer` は受け付けず、`/stop` による中止は可能。
 
 recentはuser turn単位で保持し、tool call/resultやskill invocationを分断しない。final-onlyのようにuser turnを持たない履歴ではassistant境界を使う。単一turnが大きすぎて安全な境界を取れない場合は、そのturn全体を要約する。繰り返しcompactは前回要約と新しく古くなった履歴から要約を更新する。
 
