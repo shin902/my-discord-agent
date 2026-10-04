@@ -7,7 +7,10 @@ const { readSessionEntries, readCommittedConversations } = vi.hoisted(() => ({
   readSessionEntries: vi.fn(),
   readCommittedConversations: vi.fn(),
 }));
-vi.mock("../../agent/session.js", () => ({ readSessionEntries }));
+vi.mock("../../agent/session.js", () => ({
+  readSessionEntries,
+  loadMessages: async () => [],
+}));
 vi.mock("../../queue/repository.js", () => ({
   getQueueRepository: () => ({ readCommittedConversations }),
 }));
@@ -146,9 +149,9 @@ beforeEach(() => {
 it.each([
   "main",
   "worker",
-])("resolves queued cron policy using public references and owner %s", (agentId) => {
+])("resolves queued cron policy using public references and owner %s", async (agentId) => {
   expect(
-    resolveSessionContext(
+    await resolveSessionContext(
       { ...input, cronJobId: "cron", cronHistoryMode: "final-only" },
       agentId,
     ),
@@ -168,9 +171,9 @@ it.each([
   {},
   { cronJobId: "cron", cronHistoryMode: "full" as const },
   { cronJobId: "cron", cronHistoryMode: "fresh" as const },
-])("preserves unprojected history outside final-only cron (%j)", (override) => {
+])("preserves unprojected history outside final-only cron (%j)", async (override) => {
   expect(
-    resolveSessionContext({ ...input, ...override }, "main"),
+    await resolveSessionContext({ ...input, ...override }, "main"),
   ).toBeUndefined();
   expect(readCommittedConversations).not.toHaveBeenCalled();
   expect(readSessionEntries).not.toHaveBeenCalled();

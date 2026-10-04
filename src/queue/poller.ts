@@ -787,7 +787,8 @@ async function processCronThreadDelivery(
         try {
           return await sendMessage(msg.groupName, sessionId, msg.content, {
             agentId,
-            historyMessages: resolveSessionContext(
+            contextOperationId: msg.id,
+            historyMessages: await resolveSessionContext(
               { ...msg, sessionId },
               agentId,
             ),
@@ -1156,7 +1157,9 @@ export async function processMessage(
               msg.content,
               {
                 agentId,
-                historyMessages: resolveSessionContext(msg, agentId),
+                contextAction: msg.contextAction,
+                contextOperationId: msg.id,
+                historyMessages: await resolveSessionContext(msg, agentId),
                 imagePaths: images?.imagePaths,
                 onDiscordEvent: (event) => {
                   if (msg.discordOutput === "none") return;

@@ -53,6 +53,11 @@
   "proxy": {
     "requestTimeoutMs": 120000
   },
+  "compaction": {
+    "enabled": true,
+    "threshold": 0.7,
+    "keepRecentTokens": 20000
+  },
   "agentMemory": {
     "threshold": 0.7
   },

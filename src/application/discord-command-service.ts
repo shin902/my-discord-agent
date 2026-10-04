@@ -74,21 +74,54 @@ export async function executeSkillCommand(
     return "スキル名には英数字、ハイフン、アンダースコアのみ使用できます。";
   }
 
+  return enqueueChannelCommand(request, {
+    content: `./command ${request.skillName}${request.prompt ? ` ${request.prompt}` : ""}`,
+    accepted: `スキル「${request.skillName}」の実行を受け付けました。`,
+    failure: "スキルの実行を受け付けられませんでした",
+  });
+}
+
+export type ContextCommandRequest = Omit<
+  SkillCommandRequest,
+  "skillName" | "prompt"
+> & {
+  action: "clear" | "compact";
+};
+
+export async function executeContextCommand(
+  request: ContextCommandRequest,
+): Promise<string> {
+  return enqueueChannelCommand(request, {
+    content: "",
+    contextAction: request.action,
+    accepted: `${request.action}を受け付けました。先行処理が終わってから実行します。`,
+    failure: `${request.action}を受け付けられませんでした`,
+  });
+}
+
+async function enqueueChannelCommand(
+  request: Omit<SkillCommandRequest, "skillName" | "prompt">,
+  command: {
+    content: string;
+    contextAction?: "clear" | "compact";
+    accepted: string;
+    failure: string;
+  },
+): Promise<string> {
   const match = await findGroupByChannelId(request.routingChannelId);
   if (!match) return "このチャンネルはAgentGroupに未登録です。";
-
-  const expectedDiscordBotId = match.group.bot ?? DEFAULT_DISCORD_BOT_ID;
-  if (request.discordBotId !== expectedDiscordBotId) {
+  if (request.discordBotId !== (match.group.bot ?? DEFAULT_DISCORD_BOT_ID)) {
     return "このDiscord BotはこのチャンネルのAgentGroupを担当していません。";
   }
-
   if (match.channel.sessionMode === "shared" && request.isThread) {
     return "このコマンドは親チャンネルで実行してください。";
   }
   if (match.channel.sessionMode !== "shared" && !request.isThread) {
     return "このコマンドはスレッド内で実行してください。";
   }
-
+  if (command.contextAction && match.channel.appendUserOnly) {
+    return "appendUserOnlyチャンネルではclear/compactを実行できません。";
+  }
   try {
     const configOverride = pickAgentConfig(match.channel);
     await getQueueRepository().enqueue({
@@ -97,14 +130,17 @@ export async function executeSkillCommand(
       routingChannelId: request.routingChannelId,
       sessionId: request.channelId,
       ...(match.channel.botId ? { botId: match.channel.botId } : {}),
-      content: `./command ${request.skillName}${request.prompt ? ` ${request.prompt}` : ""}`,
+      content: command.content,
+      ...(command.contextAction
+        ? { contextAction: command.contextAction }
+        : {}),
       timestamp: new Date().toISOString(),
       idempotencyKey: request.idempotencyKey,
       ...(Object.keys(configOverride).length > 0 ? { configOverride } : {}),
     });
-    return `スキル「${request.skillName}」の実行を受け付けました。`;
+    return command.accepted;
   } catch (error) {
-    return `スキルの実行を受け付けられませんでした: ${error instanceof Error ? error.message : String(error)}`;
+    return `${command.failure}: ${error instanceof Error ? error.message : String(error)}`;
   }
 }
 

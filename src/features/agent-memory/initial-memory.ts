@@ -40,8 +40,11 @@ export async function prepareInitialMemory(
   // Existing conversations must not receive later-turn selection (#580).
   // Role/context snapshots alone do not mean the first request has run.
   if (
-    messages.some((message) =>
-      ["user", "assistant", "toolResult"].includes(message.role),
+    messages.some(
+      (message) =>
+        ["user", "assistant", "toolResult"].includes(message.role) ||
+        (message.role === "custom" &&
+          message.customType === "session-compaction"),
     )
   )
     return;

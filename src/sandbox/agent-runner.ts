@@ -33,6 +33,18 @@ import {
 } from "../config/groups.js";
 import { convertInitialMemoryToLlm } from "../features/agent-memory/memory-context.js";
 import {
+  type ContextOperation,
+  expandCompaction,
+} from "../features/session-context/compaction.js";
+import {
+  type CompactionConfig,
+  CompactionConfigSchema,
+} from "../features/session-context/config.js";
+import {
+  prepareSessionContext,
+  preprocessSessionContext,
+} from "../features/session-context/preprocessing.js";
+import {
   formatSkillCommandPrompt,
   parseSkillCommand,
 } from "../skills/command.js";
@@ -264,8 +276,12 @@ function decorateToolResultForLlm(msg: AgentMessage): AgentMessage {
  *   pi-agent-core 標準の convertToLlm に委譲する。未知の role を無効なまま LLM へ渡さないため。 */
 export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
   const bootstrapSeen = new Set<string>();
-  return messages.flatMap((msg) => {
-    if (isSystemPromptSnapshotMessage(msg) || isSessionTimeAnchorMessage(msg))
+  return expandCompaction(messages).flatMap((msg) => {
+    if (
+      getCustomType(msg) === "session-context-reset" ||
+      isSystemPromptSnapshotMessage(msg) ||
+      isSessionTimeAnchorMessage(msg)
+    )
       return [];
     const memoryMessages = convertInitialMemoryToLlm(msg, bootstrapSeen);
     if (memoryMessages !== undefined) return memoryMessages;
@@ -303,6 +319,8 @@ export async function runAgentLoop(
   onConversation?: (entries: ConversationEntries) => void,
   imagePaths?: string[],
   historyMessages?: AgentMessage[],
+  contextOperation?: ContextOperation,
+  compaction: CompactionConfig = CompactionConfigSchema.parse({}),
 ): Promise<string> {
   const modelConfig = groupConfig.model;
   if (!modelConfig) {
@@ -322,22 +340,20 @@ export async function runAgentLoop(
           entrySource,
         )
       : appendMessage(groupName, sessionId, message, identity.agentId);
-  const rawMessages = await loadMessages(
+  const context = await prepareSessionContext(
     groupName,
     sessionId,
     identity.agentId,
+    contextOperation,
   );
+  if (context.response !== undefined) return context.response;
   const bootstrap = await initializeSessionBootstrap(
     groupName,
     sessionId,
-    rawMessages,
+    context.messages,
     groupConfig,
     identity,
   );
-  const messages =
-    historyMessages === undefined
-      ? bootstrap.messages
-      : [...bootstrap.initialMessages, ...historyMessages];
   const { skills } = bootstrap;
 
   // `./command スキル名` 形式のメッセージは、LLMの自律判断を待たずに
@@ -495,11 +511,6 @@ export async function runAgentLoop(
   );
   delegationContext.tools = agentTools;
 
-  const pendingAppends: Promise<void>[] = [];
-  let sourceAttached = false;
-  let userEntryId: number | undefined;
-  let assistantEntryId: number | undefined;
-  let response = "";
   let assistantTurns = 0;
   let aggregatedUsage: AgentTokenUsage = {
     input: 0,
@@ -509,16 +520,46 @@ export async function runAgentLoop(
     totalTokens: 0,
   };
   let hasUsage = false;
+  const promptStartedAt = Date.now();
+  const pendingAppends: Promise<void>[] = [];
+  let sourceAttached = false;
+  let userEntryId: number | undefined;
+  let assistantEntryId: number | undefined;
+  let response = "";
   let stopReason: string | undefined;
 
   // runAgent owns Agent construction and prompt execution. This callback keeps
   // persistent-session concerns (append and Discord event formatting) here.
-  const promptStartedAt = Date.now();
   try {
+    const prepared = await preprocessSessionContext({
+      groupName,
+      sessionId,
+      agentId: identity.agentId,
+      operation: contextOperation,
+      alreadyApplied: context.alreadyApplied,
+      bootstrap,
+      historyMessages,
+      compaction,
+      systemPrompt: fullSystemPrompt,
+      tools: agentTools,
+      prompt: promptInput,
+      execution: {
+        model,
+        convertToLlm: defaultConvertToLlm,
+        getApiKey,
+        signal,
+      },
+      onUsage: (usage) => {
+        aggregatedUsage = addTokenUsage(aggregatedUsage, usage);
+        assistantTurns++;
+        hasUsage = true;
+      },
+    });
+    if (prepared.response !== undefined) return prepared.response;
     const execution = await runAgent({
       systemPrompt: fullSystemPrompt,
       model,
-      messages,
+      messages: prepared.messages,
       tools: agentTools,
       thinkingLevel: groupConfig.model?.thinkingLevel ?? "off",
       prompt: promptInput,
@@ -656,10 +697,18 @@ export async function runAgentLoop(
 }
 
 const PayloadSchema = z.object({
+  compaction: CompactionConfigSchema,
   groupName: z.string(),
   sessionId: z.string(),
   agentId: z.string().min(1),
   content: z.string(),
+  contextOperation: z
+    .object({
+      action: z.enum(["clear", "compact"]).optional(),
+      operationId: z.string().min(1),
+      allowContextReset: z.boolean(),
+    })
+    .optional(),
   imagePaths: z.array(z.string().startsWith("/workspace/")).optional(),
   source: SessionSourceSchema.optional(),
   historyMessages: z
@@ -787,6 +836,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       })();
     });
 
+    let activeAnnounced = false;
+    const announceActive = () => {
+      if (!activeAnnounced) process.stderr.write("__AGENT_ACTIVE__\n");
+      activeAnnounced = true;
+    };
     let response: string;
     try {
       response = await runAgentLoop(
@@ -799,7 +853,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         payload.botToolConfig,
         (agent) => {
           steering.attach(agent);
-          process.stderr.write("__AGENT_ACTIVE__\n");
+          announceActive();
         },
         abortController.signal,
         payload.toolProxyEndpoint,
@@ -811,6 +865,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         },
         payload.imagePaths,
         payload.historyMessages,
+        payload.contextOperation
+          ? { ...payload.contextOperation, onCompactionStarted: announceActive }
+          : undefined,
+        payload.compaction,
       );
     } catch (error) {
       // Initialization failures must reject pre-attach requests without

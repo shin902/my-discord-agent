@@ -1,6 +1,7 @@
 import type { ChatInputCommandInteraction } from "discord.js";
 import {
   executeBotCommand,
+  executeContextCommand,
   executeSkillCommand,
   executeSteerCommand,
   executeStopCommand,
@@ -68,6 +69,26 @@ export async function handleSkillCommand(
     idempotencyKey: `discord-interaction:${interaction.id}`,
   });
   await editReply(interaction, result);
+}
+
+export async function handleContextCommand(
+  interaction: ChatInputCommandInteraction,
+  action: "clear" | "compact",
+  discordBotId = DEFAULT_DISCORD_BOT_ID,
+): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const channel = interaction.channel as InteractionChannel | null;
+  await editReply(
+    interaction,
+    await executeContextCommand({
+      discordBotId,
+      channelId: interaction.channelId,
+      routingChannelId: await interactionGroupLookupId(interaction),
+      isThread: channel?.isThread?.() === true,
+      action,
+      idempotencyKey: `discord-interaction:${interaction.id}`,
+    }),
+  );
 }
 
 /** Adapt a Discord interaction into the stop application use case. */

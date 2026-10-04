@@ -88,7 +88,7 @@ data/cron/
 
 handlerが設定されてる場合、JSONの全フィールドは `CronContext` に詰めてハンドラーに渡す。"handler なし時必須" フィールドはhandlerありの場合オプション扱いになるが、記載すればハンドラーから参照できる。
 
-通常のDiscord会話におけるAgentConfigの解決順は `group → Bot profile（指定時） → channel`、cron jobにおける解決順は `group → Bot profile（botId指定時） → cron job` である。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでも配送先channelのAgentConfigは継承しない。未指定フィールドは親を継承し、`approvalRequiredTools` のjobでの未指定も同様に親を継承する。`[]` は明示解除であり、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronのAgentConfig override対象ではない。cronのAgentConfigは信頼済みの静的設定からのみ投入する。
+通常のDiscord会話におけるAgentConfigの解決順は `group → Bot profile（指定時） → channel`、cron jobにおける解決順は `group → Bot profile（botId指定時） → cron job` である。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでも配送先channelのAgentConfigは継承しない。未指定フィールドは親を継承し、`approvalRequiredTools` のjobでの未指定も同様に親を継承する。`[]` は明示解除であり、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronのAgentConfig override対象ではない。cronのAgentConfigは信頼済みの静的設定からのみ投入する。compactionは `config/config.json` のグローバル設定を使用し、jobでのoverrideはない。
 
 ### Bot owner
 
@@ -160,7 +160,7 @@ cron jobに `"historyMode": "final-only"` を明示した場合、次runのLLM c
 
 Mainとjobの `botId` で選択されたBotは共通contractを使う。jobのhistoryModeは `enqueueCronInbox()` でqueue入力に保存し、pollerは保存済みmodeを使う。設定変更は再起動後の新規enqueueに適用し、受付済みqueueのpolicyは変えない。channel・group・Bot profileにはこの設定を設けず、通常のDiscord入力や同期 `bot run/resume`・`/bot` Taskには継承しない。handlerがenqueue時に `fresh` を選んだ場合は過去runの履歴を引き継がず、final-only projectionは行わない。既存のMail handlerは常に `fresh` を使うため対象外。
 
-初版は採用順に過去finalを全件引き継ぎ、件数/token上限やLLMによる要約は設けない。finalは成功結果commit時のassistant entry参照で識別し、非空textの `stop` / `length` 応答だけを使う。tool call/result、途中assistant、過去user/event、skill invocation、steering instructionは自動再注入しない。system prompt・contextFiles・保存済み初回Agent Memoryなどの初期snapshotは維持し、今回のskill invocationやsteerは通常どおり届く。
+採用順に過去finalを引き継ぐ。contextが閾値を超える場合は [共通auto compact](session-context.md) により公開finalだけからcheckpointを作り、要約 + recent公開finalで継続する。full compactのprivateな要約はfinal-onlyへ流用せず、退避rawの採用済み公開finalまたは直前の公開checkpointを使う。finalは成功結果commit時のassistant entry参照で識別し、非空textの `stop` / `length` 応答だけを使う。tool call/result、途中assistant、過去user/event、skill invocation、steering instructionは自動再注入しない。system prompt・contextFiles・保存済み初回Agent Memoryなどの初期snapshotは維持し、今回のskill invocationやsteerは通常どおり届く。
 
 失敗・キャンセル・finalなし・採用されなかったretryは除外する。`<NO_REPLY>` / `discordOutput: "none"` など配信を抑制した結果も含めない。「公開」は配送対象の成功結果として採用された時点を意味し、Discord配送完了は待たない。raw trajectoryは削除・圧縮・書き換えず保持する。識別参照や配信可否のmetadataがない旧履歴は推測して採用しない。[保存・移行](../storage.md#session-trajectory)も参照。
 

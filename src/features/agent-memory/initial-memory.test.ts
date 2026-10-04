@@ -279,15 +279,18 @@ describe("initial owner memory at the host/session boundary", () => {
     ]);
   });
 
-  it("selects despite a Bot role snapshot and replays the original snapshot on retry, continuation and rename/resume", async () => {
+  it.each([
+    "system-prompt-snapshot",
+    "session-context-reset",
+  ])("selects in fresh context with %s and replays the original snapshot on retry, continuation and rename/resume", async (customType) => {
     const owner = "レビュー / ../💡";
     await session.appendMessage(
       "group",
       "session",
       {
         role: "custom",
-        customType: "system-prompt-snapshot",
-        content: "Bot role",
+        customType,
+        content: customType === "system-prompt-snapshot" ? "Bot role" : "",
         display: false,
         timestamp: 1,
       },
@@ -334,7 +337,7 @@ describe("initial owner memory at the host/session boundary", () => {
         )
         .all(),
     ).toEqual([
-      { entry_type: "system-prompt-snapshot", source_json: null },
+      { entry_type: customType, source_json: null },
       { entry_type: INITIAL_MEMORY_TYPE, source_json: null },
       { entry_type: "user", source_json: null },
     ]);
@@ -344,17 +347,28 @@ describe("initial owner memory at the host/session boundary", () => {
     );
   });
 
-  it("does not retrofit memory into an existing conversation without a marker", async () => {
+  it.each([
+    { role: "user" as const, content: "past request", timestamp: 1 },
+    {
+      role: "custom" as const,
+      customType: "session-compaction",
+      content: "Previous conversation checkpoint",
+      display: false,
+      timestamp: 1,
+      archiveSessionId: "session-before-compaction",
+      operationId: "compact",
+      contextMode: "full",
+      recentMessages: [],
+    },
+  ])("does not retrofit memory into an existing conversation without a memory marker (%j)", async (priorConversation) => {
     await memory("main", "記憶.md");
-    await session.appendMessage(
-      "group",
-      "session",
-      { role: "user", content: "past request", timestamp: 1 },
-      "main",
-    );
+    respond([0.95]);
+    await session.appendMessage("group", "session", priorConversation, "main");
     await run();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(await messages()).toHaveLength(1);
+    expect(await messages()).toEqual([priorConversation]);
+    expect(beforeOpen).not.toHaveBeenCalled();
+    expect(threshold).not.toHaveBeenCalled();
   });
 
   it("keeps group and exact owner identities distinct, including path-like names", async () => {

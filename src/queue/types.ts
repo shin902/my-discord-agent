@@ -26,6 +26,8 @@ export interface InboxMessage {
   /** Suppress all automatic Discord output, including empty successful results. */
   discordOutput?: "none";
   content: string;
+  /** Ordered session context maintenance; not an instruction for the conversational Agent. */
+  contextAction?: "clear" | "compact";
   timestamp: string;
   enqueuedAt?: string;
   retries: number;

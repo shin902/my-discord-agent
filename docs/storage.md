@@ -81,6 +81,8 @@ systemd等で管理している環境では`pnpm start`を二重起動せず、�
 
 session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions.sqlite`に保存する。`runtime.sqlite`はqueue・delivery・admission等のControl Plane、session DBはconversation/task trajectoryのData Planeである。session storeはSQLiteのversioned schemaを使い、`sessions`でidentityを管理し、`session_entries`へメッセージをappendする。
 
+[clear / compact](spec/session-context.md) は旧sessionを退避IDへrenameしてから元IDをfresh/checkpointで置き換える。raw entry IDと採用会話参照は維持し、recent履歴はcheckpoint内に保持してraw会話の二重登録を避ける。schema v6のままで新規table・一括変換は不要。
+
 DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.sqlite`は公開されない。DB backupは稼働停止中にcopyするかSQLite backup APIを使い、WAL運用へ変更した場合にmain fileだけをcopyしない。
 
 `session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存し、LLM contextには含めません。schema v6では同じgroup内の論理session identityは `(agent_id,id)`、entry所属は `(agent_id,session_id)` 複合FKです。v5で導入した`sessions.agent_id`はgroup内のownerの正本で、未設定の通常会話は`main`、Botを設定したchannel会話・cron・Bot TaskはBot IDです。Bot registryからBotを削除しても保存済みownerは変えません。`bot_task_sessions`はTaskのadmission/list/resume用であり、実行時のowner照合には使用しません。owner別のread-only trajectoryはuser entryを持つsessionだけをgroup DB内でsession作成時刻・ID、entry sequence順に走査します。未公開のsnapshot-only Bot sessionは含めません。既存sessionへの追記・renameはownerを変更しません。
@@ -101,7 +103,7 @@ source付きappendは同じwrite transaction内で `(agent_id, session_id, sourc
 
 append APIはgroup DB内でstableなentry IDを返します。Runnerは入力user / final assistantのIDをhostへ返し、runtimeの採用参照が確定した後、exporterは指定entry本文だけをread-onlyで取得します。ownerを指定したsession renameは複合FKのCASCADEでentry IDを変えず、参照のsession ID更新は不要です。旧履歴や存在しないDBを補完・作成しません。export / re-exportにはsession DBとruntime内の採用参照の両方をbackup・保持してください。group DBを削除・再作成する際はID再利用を避けるため古い採用参照を残さない運用が必要です。host / runnerの同時更新と旧方式からの移行制限は [Agent Memory export](agent-memory.md#attempt照合方式からのrollout) を参照してください。
 
-cron jobの [`historyMode: "final-only"`](spec/cron.md#final-only-historymode) はsession DBを変更せず、`src/features/session-context/` が採用済み参照から同じowner/sessionのfinal本文だけをread-onlyで選び、汎用のprojected historyとしてsandboxへ渡します。raw trajectoryと初期snapshotは保持され、LLMへ渡す過去run履歴だけを置き換えます。finalとrunの対応は `committed_conversations.turn_id` とstable assistant entry IDで追跡できます。旧履歴の推測backfillは行いません。
+cron jobの [`historyMode: "final-only"`](spec/cron.md#final-only-historymode) はsession DBを変更せず、`src/features/session-context/` が採用済み参照から同じowner/session（compactionによる退避先を含む）のfinal本文を既存のentry参照で選び、projected historyとしてsandboxへ渡します。raw trajectoryと初期snapshotは保持され、LLMへ渡す過去run履歴だけを置き換えます。finalとrunの対応は `committed_conversations.turn_id` とstable assistant entry IDで追跡できます。旧履歴の推測backfillは行いません。
 
 runtimeの `conversationPath` はMainでは従来の `data/sessions/<group>/sessions.sqlite#session=<id>`、Bot ownerでは末尾に `&agent=<URLエンコードしたBot ID>` を付ける。既存の保存済みmetadataは書き換えない。
 

@@ -441,6 +441,7 @@ Discord runtime は `discord.bots` map に定義した Bot を使用します。
 |---|---|---|
 | `defaultModel` | ✓ | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`） |
 | `proxy` | — | `requestTimeoutMs`: クレデンシャルプロキシの upstream リクエストタイムアウト（ms、デフォルト: 120000） |
+| `compaction` | — | 全Group / Bot / Channel / cron共通の圧縮設定。既定値は `{ "enabled": true, "threshold": 0.7, "keepRecentTokens": 20000 }`。`enabled: false` はautoだけを停止し、手動compactは利用可能。個別overrideは不可。詳細は [clear / compact](spec/session-context.md) |
 | `agentMemory` | — | `threshold`: owner別Markdownの初回選択閾値（0〜1、仮の初期値0.7）。有効化はGroup / Bot profileの `agentMemory.enabled` で行い、このglobal設定では行わない。Host認証は `TYPESAFE_API_KEY`。詳細・制約は [Agent Memory](agent-memory.md#owner別markdownと新規sessionの初回選択) |
 | `agent` | — | `timeoutMs`: エージェントプロセス（サンドボックスコンテナ）のタイムアウト（ms、デフォルト: 600000＝10分） |
 | `xSavedReceiver` | — | `enabled`（既定: false）、`port`（既定: 8787、1–65535）。localhost 専用の X saved 受信サーバー。[Tailscale Serve と拡張の設定手順](x-saved.md#live-capture-setup)を参照。変更後は再起動が必要 |

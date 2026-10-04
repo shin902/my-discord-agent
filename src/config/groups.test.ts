@@ -17,6 +17,42 @@ const setupRawGroups = async (raw: unknown) => {
 };
 
 describe("loadGroups", () => {
+  it("ignores compaction overrides in group, channel, and Bot settings", async () => {
+    const settings = {
+      enabled: true,
+      threshold: 0.7,
+      keepRecentTokens: 20_000,
+    };
+    const { loadGroups } = await setupRawGroups([
+      {
+        name: "group",
+        channels: [
+          {
+            channelId: "channel",
+            sessionMode: "shared",
+            compaction: { enabled: false },
+          },
+        ],
+        compaction: settings,
+      },
+    ]);
+    const { resolveAgentConfig } = await import("./agent-resolution.js");
+    const [group] = await loadGroups();
+    const { BotProfileSchema } = await import("./bots.js");
+    const bot = BotProfileSchema.parse({
+      group: "group",
+      description: "worker",
+      instructions: "work",
+      compaction: { enabled: false },
+    });
+    expect(group).not.toHaveProperty("compaction");
+    expect(group.channels[0]).not.toHaveProperty("compaction");
+    expect(bot).not.toHaveProperty("compaction");
+    expect(
+      resolveAgentConfig(group, bot, group.channels[0]),
+    ).not.toHaveProperty("compaction");
+  });
+
   it.each([
     [undefined, undefined, undefined],
     [undefined, true, true],

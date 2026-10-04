@@ -30,6 +30,46 @@ function dbFor(group: string): Database.Database {
 }
 
 describe("SQLite session trajectory store", () => {
+  it("rolls back an incomplete context replacement and preserves fresh-side cron retention without expiring the archive", async () => {
+    const original: AgentMessage = {
+      role: "user",
+      content: "Original",
+      timestamp: 1,
+    };
+    await session.appendMessage("rotation", "current", original, "main");
+    const db = new Database(path.join(root, "rotation", "sessions.sqlite"));
+    try {
+      db.exec(
+        "UPDATE sessions SET kind='cron-per-run'; CREATE TRIGGER reject_checkpoint BEFORE INSERT ON session_entries WHEN NEW.session_id='current' BEGIN SELECT RAISE(ABORT, 'checkpoint write failed'); END;",
+      );
+      await expect(
+        session.replaceSessionContext("rotation", "current", "main", "old", [
+          { role: "user", content: "Replacement", timestamp: 2 },
+        ]),
+      ).rejects.toThrow("checkpoint write failed");
+      expect(await session.loadMessages("rotation", "current", "main")).toEqual(
+        [original],
+      );
+      expect(await session.loadMessages("rotation", "old", "main")).toEqual([]);
+      db.exec("DROP TRIGGER reject_checkpoint");
+      await session.replaceSessionContext(
+        "rotation",
+        "current",
+        "main",
+        "old",
+        [],
+      );
+      expect(
+        db.prepare("SELECT id,kind FROM sessions ORDER BY id").all(),
+      ).toEqual([
+        { id: "current", kind: "cron-per-run" },
+        { id: "old", kind: "conversation" },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("存在しないsessionは空配列を返し、per-group DBを作成する", async () => {
     await expect(
       session.loadMessages("empty-group", "missing", "main"),

@@ -45,6 +45,8 @@ const {
 } = await import("./command-handlers.js");
 const { command: botCommand } = await import("./commands/bot.js");
 const { command: skillCommand } = await import("./commands/skill.js");
+const { command: clearCommand } = await import("./commands/clear.js");
+const { command: compactCommand } = await import("./commands/compact.js");
 const { command: steerCommand } = await import("./commands/steer.js");
 const { command: stopCommand } = await import("./commands/stop.js");
 const {
@@ -343,10 +345,58 @@ describe("stop command", () => {
   });
 });
 
+describe("context commands", () => {
+  it.each([
+    clearCommand,
+    compactCommand,
+  ])("queues maintenance of the channel owner and rejects appendUserOnly without blocking skill execution ($data.name)", async (command) => {
+    mocks.findGroupByChannelId.mockResolvedValue({
+      group: { name: "main" },
+      channel: {
+        channelId: "channel-1",
+        sessionMode: "shared",
+        botId: "worker",
+      },
+    });
+    const interaction = makeInteraction({});
+    await command.execute(interaction as never, { discordBotId: "personal" });
+    expect(mocks.enqueue).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        sessionId: "channel-1",
+        botId: "worker",
+        contextAction: command.data.name,
+        content: "",
+        idempotencyKey: "discord-interaction:interaction-1",
+      }),
+    );
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content: expect.stringContaining("受け付けました"),
+    });
+    mocks.enqueue.mockClear();
+    mocks.findGroupByChannelId.mockResolvedValue({
+      group: { name: "main" },
+      channel: {
+        channelId: "channel-1",
+        sessionMode: "shared",
+        appendUserOnly: true,
+      },
+    });
+    await command.execute(interaction as never, { discordBotId: "personal" });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(interaction.editReply).toHaveBeenLastCalledWith({
+      content: expect.stringContaining("appendUserOnly"),
+    });
+    await handleSkillCommand(makeSkillInteraction({}) as never);
+    expect(mocks.enqueue).toHaveBeenCalledOnce();
+  });
+});
+
 describe("command registry", () => {
   it("discovers each command module by its chat-input name", () => {
     expect(DISCORD_COMMANDS.map(({ data }) => data.toJSON().name)).toEqual([
       "bot",
+      "clear",
+      "compact",
       "skill",
       "steer",
       "stop",
@@ -373,6 +423,8 @@ describe("deployDiscordCommands", () => {
       {
         body: [
           botCommand.data.toJSON(),
+          clearCommand.data.toJSON(),
+          compactCommand.data.toJSON(),
           skillCommand.data.toJSON(),
           steerCommand.data.toJSON(),
           stopCommand.data.toJSON(),
@@ -393,6 +445,8 @@ describe("deployDiscordCommands", () => {
     expect(put).toHaveBeenCalledWith("/applications/application-1/commands", {
       body: [
         botCommand.data.toJSON(),
+        clearCommand.data.toJSON(),
+        compactCommand.data.toJSON(),
         skillCommand.data.toJSON(),
         steerCommand.data.toJSON(),
         stopCommand.data.toJSON(),

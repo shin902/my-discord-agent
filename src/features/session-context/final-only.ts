@@ -4,6 +4,7 @@ import type { ConversationEntries } from "../../agent/conversation.js";
 import { readSessionEntries } from "../../agent/session.js";
 import { getQueueRepository } from "../../queue/repository.js";
 import type { InboxMessage } from "../../queue/types.js";
+import { isCompactionMessage, loadContextSegments } from "./compaction.js";
 
 /** Select exact adopted finals, never infer them from adjacent raw messages. */
 export function projectSessionContext(
@@ -36,24 +37,34 @@ export function projectSessionContext(
 }
 
 /** Undefined preserves full history; [] explicitly removes prior run traces. */
-export function resolveSessionContext(
+export async function resolveSessionContext(
   input: InboxMessage,
   agentId: string,
-): AgentMessage[] | undefined {
+): Promise<AgentMessage[] | undefined> {
   if (input.cronHistoryMode !== "final-only") return undefined;
   const references = [
     ...getQueueRepository().readCommittedConversations(input.groupName, {
       publicOnly: true,
     }),
   ];
-  const entries = readSessionEntries(
+  const segments = await loadContextSegments(
     input.groupName,
     input.sessionId,
     agentId,
-    references.flatMap(({ userEntryId, assistantEntryId }) => [
-      userEntryId,
-      assistantEntryId,
-    ]),
+    "final-only",
   );
-  return projectSessionContext(entries, references);
+  const entryIds = references.flatMap(({ userEntryId, assistantEntryId }) => [
+    userEntryId,
+    assistantEntryId,
+  ]);
+  return segments.flatMap(({ sessionId, messages }) => [
+    ...messages.filter(
+      (message) =>
+        isCompactionMessage(message) && message.contextMode === "final-only",
+    ),
+    ...projectSessionContext(
+      readSessionEntries(input.groupName, sessionId, agentId, entryIds),
+      references,
+    ),
+  ]);
 }
