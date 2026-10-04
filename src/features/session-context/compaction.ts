@@ -142,6 +142,18 @@ export function splitCompactionHistory(
       : message.role === "user",
   );
   const history = expandCompaction(projectedHistory);
+  const isTurnStart = (message: AgentMessage) =>
+    hasUserTurns
+      ? message.role === "user"
+      : message.role === "assistant" &&
+        !message.content.some((block) => block.type === "toolCall");
+  let latestTurnTokens = 0;
+  for (let index = history.length - 1; index >= 0; index--) {
+    latestTurnTokens += estimateMessageTokens(history[index]);
+    if (isTurnStart(history[index])) break;
+  }
+  if (latestTurnTokens > keepRecentTokens)
+    return { older: history, recent: [] };
   let tokens = 0;
   let cut = history.length;
   for (let index = history.length - 1; index >= 0; index--) {
@@ -151,16 +163,7 @@ export function splitCompactionHistory(
   }
   if (tokens < keepRecentTokens) return { older: [], recent: history };
   // Do not cut a tool exchange or detach a skill invocation from its user turn.
-  while (
-    cut > 0 &&
-    (hasUserTurns
-      ? history[cut]?.role !== "user"
-      : history[cut]?.role !== "assistant" ||
-        (history[cut] as { content?: Array<{ type: string }> }).content?.some(
-          (block) => block.type === "toolCall",
-        ))
-  )
-    cut--;
+  while (cut > 0 && !isTurnStart(history[cut])) cut--;
   if (cut === 0) {
     return { older: history, recent: [] };
   }

@@ -125,6 +125,7 @@ async function run(
     history?: AgentMessage[];
     enabled?: boolean;
     threshold?: number;
+    keepRecentTokens?: number;
   } = {},
 ) {
   return runner.runAgentLoop(
@@ -155,7 +156,7 @@ async function run(
       allowContextReset: settings.allowContextReset ?? true,
     },
     {
-      keepRecentTokens: 60,
+      keepRecentTokens: settings.keepRecentTokens ?? 60,
       threshold: settings.threshold ?? 0.7,
       enabled: settings.enabled ?? true,
     },
@@ -250,7 +251,15 @@ describe("non-destructive session context maintenance", () => {
       assistant("Recent answer"),
     ];
     await seed(history);
-    await run("compact");
+    await run("compact", {
+      keepRecentTokens: history
+        .slice(2)
+        .reduce(
+          (tokens, message) =>
+            tokens + compaction.estimateMessageTokens(message),
+          0,
+        ),
+    });
     const archive = compaction.contextArchiveId("channel", "operation-1");
     expect(await sessions.loadMessages(group, archive, "main")).toEqual(
       expect.arrayContaining(history),
@@ -554,6 +563,7 @@ describe("non-destructive session context maintenance", () => {
     const recentFinal = assistant("Latest published final");
     await run("compact", {
       operationId: "public-again",
+      keepRecentTokens: compaction.estimateMessageTokens(recentFinal),
       history: [
         ...last.messages,
         assistant(`New published answer ${"n".repeat(5000)}`),
@@ -713,6 +723,8 @@ describe("non-destructive session context maintenance", () => {
     "aborted-summary",
   ])("prepares tool-loop context with best-effort compaction and applies steering received during preparation (%s)", async (outcome) => {
     model.contextWindow = 2000;
+    const previous = [user("Earlier request"), assistant("Earlier answer")];
+    await seed(previous);
     const { runAgent } = await vi.importActual<
       typeof import("../../sandbox/agent-execution.js")
     >("../../sandbox/agent-execution.js");
@@ -824,6 +836,7 @@ describe("non-destructive session context maintenance", () => {
       [{ type: "text", text: toolText }],
     ]);
     expect(raw.filter((message) => message.role === "user")).toEqual([
+      previous[0],
       {
         role: "user",
         content: [{ type: "text", text: "New input" }],
