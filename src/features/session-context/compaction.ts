@@ -132,9 +132,16 @@ export function splitCompactionHistory(
   messages: AgentMessage[],
   keepRecentTokens: number,
 ): { older: AgentMessage[]; recent: AgentMessage[] } {
-  const history = expandCompaction(
-    messages.filter((message) => !isContextInitialization(message)),
+  const projectedHistory = messages.filter(
+    (message) => !isContextInitialization(message),
   );
+  // Checkpoint summaries expand to synthetic users, not actual user turns.
+  const hasUserTurns = projectedHistory.some((message) =>
+    isCompactionMessage(message)
+      ? message.recentMessages.some((recent) => recent.role === "user")
+      : message.role === "user",
+  );
+  const history = expandCompaction(projectedHistory);
   let tokens = 0;
   let cut = history.length;
   for (let index = history.length - 1; index >= 0; index--) {
@@ -144,7 +151,6 @@ export function splitCompactionHistory(
   }
   if (tokens < keepRecentTokens) return { older: [], recent: history };
   // Do not cut a tool exchange or detach a skill invocation from its user turn.
-  const hasUserTurns = history.some((message) => message.role === "user");
   while (
     cut > 0 &&
     (hasUserTurns

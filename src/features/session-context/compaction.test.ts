@@ -467,7 +467,7 @@ describe("non-destructive session context maintenance", () => {
     ).toEqual([]);
   });
 
-  it("auto compact consumes only projected final-only history and replays that checkpoint on the next final-only run", async () => {
+  it("final-only compactions preserve recent public finals across repeated checkpoints without mixing private history", async () => {
     await seed([
       user(`Private tool trace ${"z".repeat(1200)}`),
       assistant("Raw private answer"),
@@ -502,6 +502,25 @@ describe("non-destructive session context maintenance", () => {
         .defaultConvertToLlm(last.messages)
         .some((message) => JSON.stringify(message).includes("ID=12345")),
     ).toBe(true);
+    const recentFinal = assistant("Latest published final");
+    await run("compact", {
+      operationId: "public-again",
+      history: [
+        ...last.messages,
+        assistant(`New published answer ${"n".repeat(5000)}`),
+        recentFinal,
+      ],
+    });
+    const checkpoint = (
+      await sessions.loadMessages(group, "channel", "main")
+    ).find(compaction.isCompactionMessage);
+    expect(checkpoint?.recentMessages).toEqual([recentFinal]);
+    const repeatedSummary = execute.mock.calls.at(-1)?.[0].prompt;
+    expect(repeatedSummary).toContain("Previous conversation checkpoint");
+    expect(repeatedSummary).toContain("New published answer");
+    expect(repeatedSummary).not.toContain("Latest published final");
+    expect(repeatedSummary).not.toContain("Private tool trace");
+
     await run(undefined, { operationId: "ordinary", enabled: false });
     const ordinary = execute.mock.calls.at(-1)?.[0] as AgentExecutionOptions;
     expect(
