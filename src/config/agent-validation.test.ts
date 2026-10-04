@@ -20,13 +20,16 @@ beforeEach(() => {
 });
 
 describe("validateAgentConfig", () => {
-  it("accepts a valid effective AgentConfig", async () => {
+  it.each([
+    "get-current-weather",
+    "codex-cloud-submit",
+  ])("accepts a valid effective AgentConfig with approval for %s", async (tool) => {
     await expect(
       validateAgentConfig(
         {
           model: { provider: "provider-a", modelId: "model-x" },
-          tools: ["get-current-weather"],
-          approvalRequiredTools: ["get-current-weather"],
+          tools: [tool],
+          approvalRequiredTools: [tool],
           mounts: [{ host: "groups/main", container: "/repo" }],
         },
         defaultModel,

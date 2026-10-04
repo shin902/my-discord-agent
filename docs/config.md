@@ -412,6 +412,20 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 
 `groups.json` / `credentials.json` / `cron.json` に分離されていない残りの設定。トップレベルはオブジェクト。
 
+### `codexCloud`
+
+Codex Cloud taskのsubmit先をtrusted host設定で制限します。`allowedEnvironments` はenvironment IDの配列で、入力と完全一致するIDだけを許可します。section未指定・空配列なら全submitを拒否し、不正なsectionは設定エラーになります。変更後はhostを再起動してください。
+
+```json
+{
+  "codexCloud": {
+    "allowedEnvironments": ["shin902/orca"]
+  }
+}
+```
+
+利用するgroup / channel / Bot profile / cronのAgentConfigには `tools: ["codex-cloud-submit"]` を明示し、確認を挟む場合は既存の `approvalRequiredTools: ["codex-cloud-submit"]` を設定します。hostサービスの実行ユーザーでCodex CLIをインストールし、`codex login` を済ませ、hostの `PATH` から `codex` を起動できるようにしてください。CLIのlogin tokenはconfigやsandboxへ渡しません。入力と結果の契約は [Codex Cloud submit](agent-tools-skills.md#codex-cloud-submit) を参照してください。
+
 ### `discord`
 
 Discord runtime は `discord.bots` map に定義した Bot を使用します。デフォルト identity `personal` も通常の entry として必須です。各 entry の `tokenEnv` はトークンを読む環境変数名（トークン値は設定ファイルへ書かない）、`applicationId` は非機密な Discord application ID です。`pnpm discord:deploy global` または `pnpm discord:deploy guild <guild-id>` は、同じ `src/discord/command-registry.ts` の command set を全 Bot application の選択 scope へ bulk overwrite します。deploy script は存在する `.env` を自動で読み込みます。
@@ -440,6 +454,7 @@ Discord runtime は `discord.bots` map に定義した Bot を使用します。
 | キー | 必須 | 内容 |
 |---|---|---|
 | `defaultModel` | ✓ | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`） |
+| `codexCloud` | — | `allowedEnvironments`: Codex Cloud taskのsubmit先environment ID配列（完全一致）。省略 / 空配列は全拒否。hostのログイン済みCodex CLIを使用 |
 | `proxy` | — | `requestTimeoutMs`: クレデンシャルプロキシの upstream リクエストタイムアウト（ms、デフォルト: 120000） |
 | `compaction` | — | 全Group / Bot / Channel / cron共通の圧縮設定。既定値は `{ "enabled": true, "threshold": 0.7, "keepRecentTokens": 20000 }`。`enabled: false` はautoだけを停止し、手動compactは利用可能。個別overrideは不可。詳細は [clear / compact](spec/session-context.md) |
 | `agentMemory` | — | `threshold`: owner別Markdownの初回選択閾値（0〜1、仮の初期値0.7）。有効化はGroup / Bot profileの `agentMemory.enabled` で行い、このglobal設定では行わない。Host認証は `TYPESAFE_API_KEY`。詳細・制約は [Agent Memory](agent-memory.md#owner別markdownと新規sessionの初回選択) |
