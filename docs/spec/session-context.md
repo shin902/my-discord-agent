@@ -43,7 +43,11 @@ LLM完了後のrenameとfresh側作成だけを短いSQLite transactionで確定
 
 同じsession IDを使うcronは通常入力と同じqueue順序で処理する。fresh / new-threadは別sessionであり、通常は圧縮する過去履歴がない。
 
-final-onlyでは採用済み公開finalだけを要約対象とし、そのcheckpoint + recent公開final + 新たな公開finalを継続contextへ渡す。同じsessionを通常会話も使うため、final-onlyの圧縮ではfull側の会話をcheckpoint内に原文保持し、ユーザー制約やtool contextを失わせない。full側は後の通常実行時に必要なら別途圧縮する。full compactの要約をfinal-onlyへ流用しない。full compact時には公開finalのprojectionもcheckpointに保持して、後続final-only cronがprivateなuser/tool/途中応答を再注入せず履歴を継続できるようにする。clear後はこの公開projectionも引き継がない。
+final-onlyでは採用済み公開finalだけを要約対象とし、そのcheckpoint + recent公開final + 新たな公開finalを継続contextへ渡す。checkpointは圧縮した側のcontextだけを保持し、full/public両方をコピーしない。
+
+反対側のcontextはcheckpointの退避先IDを辿って復元する。final-only compact後の通常会話は直前のfull checkpointまたはraw会話を使い、ユーザー制約やtool contextを失わない。full compact後のfinal-onlyは直前のpublic checkpointまたは退避rawの採用済み公開finalを既存のentry参照で選ぶ。privateなuser/tool/途中応答やfull summaryは再注入しない。辿るのは同じownerのcontext継続に必要な退避先だけで、無関係なsessionを検索・注入しない。clearは退避先へ辿るcheckpointを残さないため、両contextの継続が止まる。
+
+Runnerはsession-context featureで履歴の準備・manual操作の早期終了を行い、既存bootstrap / prompt / tool解決後、推論前に1回前処理を呼ぶ。token推定、threshold、manual/auto判断、checkpointの成功・retry判定はfeatureが所有する。Runnerには通常の推論・永続append・usage集計・Discord telemetryだけを残す。generic lifecycle hookやpreprocessing pipelineは導入しない。
 
 ## appendUserOnlyの保護
 

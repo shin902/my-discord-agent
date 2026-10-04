@@ -32,7 +32,6 @@ export type CompactionMessage = CustomMessage & {
   operationId: string;
   contextMode: "full" | "final-only";
   recentMessages: AgentMessage[];
-  publicHistoryMessages: AgentMessage[];
 };
 
 export function isCompactionMessage(
@@ -43,16 +42,21 @@ export function isCompactionMessage(
   );
 }
 
-export function publicCheckpointHistory(
-  messages: AgentMessage[],
-): AgentMessage[] {
-  return messages.flatMap((message) =>
-    isCompactionMessage(message)
-      ? message.contextMode === "final-only"
-        ? [message]
-        : message.publicHistoryMessages
-      : [],
-  );
+// The opposite projection stays in the backup, not as a second copy in a checkpoint.
+export async function loadContextSegments(
+  groupName: string,
+  sessionId: string,
+  agentId: string,
+  contextMode: CompactionMessage["contextMode"],
+) {
+  const segments: Array<{ sessionId: string; messages: AgentMessage[] }> = [];
+  while (true) {
+    const messages = await loadMessages(groupName, sessionId, agentId);
+    segments.unshift({ sessionId, messages });
+    const checkpoint = messages.find(isCompactionMessage);
+    if (!checkpoint || checkpoint.contextMode === contextMode) return segments;
+    sessionId = checkpoint.archiveSessionId;
+  }
 }
 
 export function isContextInitialization(message: AgentMessage): boolean {
@@ -212,10 +216,8 @@ export async function compactSessionContext(options: {
   agentId: string;
   operationId: string;
   messages: AgentMessage[];
-  fullMessages: AgentMessage[];
   initialMessages: AgentMessage[];
   contextMode: "full" | "final-only";
-  publicHistoryMessages: AgentMessage[];
   config: AgentRuntimeConfig;
   onUsage?: (usage: Usage) => void;
   onStarted?: () => void;
@@ -286,29 +288,11 @@ export async function compactSessionContext(options: {
     operationId: options.operationId,
     contextMode: options.contextMode,
     recentMessages: recent,
-    publicHistoryMessages:
-      options.contextMode === "full" ? options.publicHistoryMessages : [],
   };
   const initialMessages = options.initialMessages.filter(
     isContextInitialization,
   );
   const messages = [...initialMessages, checkpoint];
-  // Compacting a public projection must not erase user constraints or tool context
-  // still needed by ordinary full-history runs of the same session.
-  const storedCheckpoint: CompactionMessage =
-    options.contextMode === "full"
-      ? checkpoint
-      : {
-          ...checkpoint,
-          content: "",
-          contextMode: "full",
-          recentMessages: expandCompaction(
-            options.fullMessages.filter(
-              (message) => !isContextInitialization(message),
-            ),
-          ),
-          publicHistoryMessages: [checkpoint],
-        };
   const beforeTokens = (
     await options.execution.convertToLlm(options.messages)
   ).reduce((tokens, message) => tokens + estimateMessageTokens(message), 0);
@@ -325,18 +309,9 @@ export async function compactSessionContext(options: {
     options.sessionId,
     options.agentId,
     archiveSessionId,
-    [...initialMessages, storedCheckpoint],
+    messages,
   );
   if (replaced) return messages;
-  const current = await loadMessages(
-    options.groupName,
-    options.sessionId,
-    options.agentId,
-  );
-  return options.contextMode === "full"
-    ? current
-    : [
-        ...current.filter(isContextInitialization),
-        ...publicCheckpointHistory(current),
-      ];
+  // Session ordering prevents concurrent replacement; retries are handled before summarization.
+  throw new Error("Context operation was already applied");
 }

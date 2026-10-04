@@ -613,7 +613,6 @@ export interface SendMessageOptions {
   historyMessages?: AgentMessage[];
   contextAction?: "clear" | "compact";
   contextOperationId?: string;
-  publicHistoryMessages?: AgentMessage[];
   onDiscordEvent?: (event: DiscordEvent) => void;
   attachments?: AttachmentRef[];
   /** Container-local image paths to include in the initial user message. */
@@ -819,7 +818,6 @@ export async function sendMessage(
     sessionId,
     agentId: options.agentId,
     content: promptContent,
-    publicHistoryMessages: options.publicHistoryMessages ?? [],
     contextOperation: {
       action: options.contextAction,
       operationId: options.contextOperationId ?? randomUUID(),

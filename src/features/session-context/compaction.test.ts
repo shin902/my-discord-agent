@@ -116,7 +116,6 @@ async function run(
     operationId?: string;
     history?: AgentMessage[];
     enabled?: boolean;
-    publicHistory?: AgentMessage[];
     threshold?: number;
   } = {},
 ) {
@@ -156,7 +155,6 @@ async function run(
       operationId: settings.operationId ?? "operation-1",
       allowContextReset: settings.allowContextReset ?? true,
     },
-    settings.publicHistory,
   );
 }
 
@@ -393,10 +391,24 @@ describe("non-destructive session context maintenance", () => {
       assistant("Recent answer"),
     ]);
     model.contextWindow = 2000;
+    const stderr = vi.spyOn(process.stderr, "write");
     await run(undefined, {
       allowContextReset: !protectedSession,
       enabled: !disabled,
     });
+    const timing = stderr.mock.calls
+      .map(([line]) => String(line))
+      .filter(
+        (line) =>
+          line.startsWith("__DISCORD_EVENT__:") &&
+          line.includes('"type":"agent_timing"'),
+      )
+      .map((line) => JSON.parse(line.slice("__DISCORD_EVENT__:".length)));
+    stderr.mockRestore();
+    expect(timing).toHaveLength(1);
+    expect(timing[0].usage.totalTokens).toBe(
+      !protectedSession && !disabled ? 30 : 15,
+    );
     const shouldCompact = !protectedSession && !disabled;
     expect(execute).toHaveBeenCalledTimes(shouldCompact ? 2 : 1);
     const active = await sessions.loadMessages(group, "channel", "main");
@@ -472,7 +484,22 @@ describe("non-destructive session context maintenance", () => {
     await run(undefined, { history: finals });
     expect(execute.mock.calls[0][0].prompt).toContain("Published answer");
     expect(execute.mock.calls[0][0].prompt).not.toContain("Private tool trace");
-    await run(undefined, { operationId: "next", history: [] });
+    await run(undefined, {
+      operationId: "next",
+      history: await finalOnly.resolveSessionContext(
+        {
+          id: "job",
+          groupName: group,
+          sessionId: "channel",
+          channelId: "channel",
+          content: "",
+          timestamp: "2026-10-03",
+          retries: 0,
+          cronHistoryMode: "final-only",
+        },
+        "main",
+      ),
+    });
     const last = execute.mock.calls.at(-1)?.[0] as AgentExecutionOptions;
     expect(
       runner
@@ -489,7 +516,23 @@ describe("non-destructive session context maintenance", () => {
     ).toContain("Raw private answer");
   });
 
-  it("full compaction retains the adopted public projection for later final-only cron without injecting its private summary", async () => {
+  it("alternating full/public compactions retain the other projection through raw references, without mixing private summaries or restoring cleared context", async () => {
+    const normal = execute.getMockImplementation();
+    if (!normal) throw new Error("Missing inference fixture");
+    execute.mockImplementation(async (options: AgentExecutionOptions) => {
+      const result = await normal(options);
+      if (
+        typeof options.prompt === "string" &&
+        options.prompt.startsWith("Summarize this conversation")
+      )
+        result.response = summary.replace(
+          "Continue the work",
+          options.prompt.includes("[User]")
+            ? "Private checkpoint"
+            : "Public checkpoint",
+        );
+      return result;
+    });
     const userEntryId = await sessions.appendMessage(
       group,
       "channel",
@@ -515,13 +558,8 @@ describe("non-destructive session context maintenance", () => {
       timestamp: "2026-10-03",
       retries: 0,
     };
-    await run("compact", {
-      publicHistory: await finalOnly.resolvePublicCompactionHistory(
-        input,
-        "main",
-      ),
-    });
-    const projected = finalOnly.resolveSessionContext(
+    await run("compact");
+    const projected = await finalOnly.resolveSessionContext(
       { ...input, cronHistoryMode: "final-only" },
       "main",
     );
@@ -533,9 +571,73 @@ describe("non-destructive session context maintenance", () => {
     expect(sent).not.toContain("Private request");
     expect(sent).not.toContain("Private progress");
     expect(sent).not.toContain("ID=12345");
+
+    const nextUser = await sessions.appendMessage(
+      group,
+      "channel",
+      user("New private constraint"),
+      "main",
+    );
+    const nextFinal = await sessions.appendMessage(
+      group,
+      "channel",
+      assistant(`New published conclusion ${"p".repeat(5000)}`),
+      "main",
+    );
+    const recentUser = await sessions.appendMessage(
+      group,
+      "channel",
+      user("Recent private request"),
+      "main",
+    );
+    const recentFinal = await sessions.appendMessage(
+      group,
+      "channel",
+      assistant("Recent published final"),
+      "main",
+    );
+    readCommittedConversations.mockReturnValue([
+      { userEntryId, assistantEntryId },
+      { userEntryId: nextUser, assistantEntryId: nextFinal },
+      { userEntryId: recentUser, assistantEntryId: recentFinal },
+    ]);
+    model.contextWindow = 2000;
+    await run(undefined, {
+      operationId: "public-compact",
+      history: await finalOnly.resolveSessionContext(
+        { ...input, cronHistoryMode: "final-only" },
+        "main",
+      ),
+    });
+    const publicSummaryPrompt = execute.mock.calls.at(-2)?.[0].prompt;
+    expect(publicSummaryPrompt).toContain("Published conclusion");
+    expect(publicSummaryPrompt).not.toContain("Private checkpoint");
+    expect(publicSummaryPrompt).not.toContain("New private constraint");
+    await run(undefined, { operationId: "ordinary", enabled: false });
+    const fullContext = JSON.stringify(
+      runner.defaultConvertToLlm(execute.mock.calls.at(-1)?.[0].messages),
+    );
+    expect(fullContext).toContain("Private checkpoint");
+    expect(fullContext).toContain("New private constraint");
+    expect(fullContext).not.toContain("Public checkpoint");
+    await run("compact", { operationId: "full-again" });
+    const publicContext = JSON.stringify(
+      runner.defaultConvertToLlm(
+        (await finalOnly.resolveSessionContext(
+          { ...input, cronHistoryMode: "final-only" },
+          "main",
+        )) ?? [],
+      ),
+    );
+    expect(publicContext).toContain("Public checkpoint");
+    expect(publicContext).not.toContain("Private checkpoint");
+    expect(publicContext).not.toContain("New private constraint");
     await run("clear", { operationId: "clear" });
     expect(
-      await finalOnly.resolvePublicCompactionHistory(input, "main"),
+      await finalOnly.resolveSessionContext(
+        { ...input, cronHistoryMode: "final-only" },
+        "main",
+      ),
     ).toEqual([]);
   });
 

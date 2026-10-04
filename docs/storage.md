@@ -103,7 +103,7 @@ source付きappendは同じwrite transaction内で `(agent_id, session_id, sourc
 
 append APIはgroup DB内でstableなentry IDを返します。Runnerは入力user / final assistantのIDをhostへ返し、runtimeの採用参照が確定した後、exporterは指定entry本文だけをread-onlyで取得します。ownerを指定したsession renameは複合FKのCASCADEでentry IDを変えず、参照のsession ID更新は不要です。旧履歴や存在しないDBを補完・作成しません。export / re-exportにはsession DBとruntime内の採用参照の両方をbackup・保持してください。group DBを削除・再作成する際はID再利用を避けるため古い採用参照を残さない運用が必要です。host / runnerの同時更新と旧方式からの移行制限は [Agent Memory export](agent-memory.md#attempt照合方式からのrollout) を参照してください。
 
-cron jobの [`historyMode: "final-only"`](spec/cron.md#final-only-historymode) はsession DBを変更せず、`src/features/session-context/` が採用済み参照から同じowner/sessionのfinal本文だけをread-onlyで選び、汎用のprojected historyとしてsandboxへ渡します。raw trajectoryと初期snapshotは保持され、LLMへ渡す過去run履歴だけを置き換えます。finalとrunの対応は `committed_conversations.turn_id` とstable assistant entry IDで追跡できます。旧履歴の推測backfillは行いません。
+cron jobの [`historyMode: "final-only"`](spec/cron.md#final-only-historymode) はsession DBを変更せず、`src/features/session-context/` が採用済み参照から同じowner/session（compactionによる退避先を含む）のfinal本文を既存のentry参照で選び、projected historyとしてsandboxへ渡します。raw trajectoryと初期snapshotは保持され、LLMへ渡す過去run履歴だけを置き換えます。finalとrunの対応は `committed_conversations.turn_id` とstable assistant entry IDで追跡できます。旧履歴の推測backfillは行いません。
 
 runtimeの `conversationPath` はMainでは従来の `data/sessions/<group>/sessions.sqlite#session=<id>`、Bot ownerでは末尾に `&agent=<URLエンコードしたBot ID>` を付ける。既存の保存済みmetadataは書き換えない。
 

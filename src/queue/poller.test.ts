@@ -23,7 +23,6 @@ vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 const resolveSessionContext = vi.hoisted(() => vi.fn());
 vi.mock("../features/session-context/final-only.js", () => ({
   resolveSessionContext,
-  resolvePublicCompactionHistory: vi.fn().mockResolvedValue([]),
 }));
 const loadMessages = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 vi.mock("../agent/session.js", async (importOriginal) => ({

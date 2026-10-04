@@ -1104,7 +1104,7 @@ describe("durable Phase 2 result state", () => {
     }
   });
 
-  it("enforces session ordering while allowing another session to claim", () => {
+  it("orders manual context maintenance between prior and subsequent jobs while allowing another session to claim", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
       const first = repo.enqueue({
@@ -1114,7 +1114,15 @@ describe("durable Phase 2 result state", () => {
         content: "first",
         timestamp: new Date().toISOString(),
       });
-      repo.enqueue({
+      const maintenance = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "serial",
+        content: "",
+        contextAction: "compact",
+        timestamp: new Date().toISOString(),
+      });
+      const second = repo.enqueue({
         channelId: "channel",
         groupName: "group",
         sessionId: "serial",
@@ -1132,6 +1140,22 @@ describe("durable Phase 2 result state", () => {
       expect(firstClaim?.job.id).toBe(first.job.id);
       expect(repo.claim("worker-b", 1_000)?.job.id).toBe(other.job.id);
       expect(repo.get(first.job.id)?.sequence).toBe(0);
+      expect(repo.claim("worker-c", 1_000)).toBeUndefined();
+      repo.commitResult(
+        first.job.id,
+        expectDefined(firstClaim).fencingToken,
+        "first result",
+      );
+      const maintenanceClaim = expectDefined(repo.claim("worker-c", 1_000));
+      expect(maintenanceClaim.job.id).toBe(maintenance.job.id);
+      expect(maintenanceClaim.job.contextAction).toBe("compact");
+      expect(repo.claim("worker-d", 1_000)).toBeUndefined();
+      repo.commitResult(
+        maintenance.job.id,
+        maintenanceClaim.fencingToken,
+        "compacted",
+      );
+      expect(repo.claim("worker-d", 1_000)?.job.id).toBe(second.job.id);
     } finally {
       repo.close();
     }
