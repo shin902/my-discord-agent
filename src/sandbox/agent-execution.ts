@@ -2,6 +2,7 @@ import {
   Agent,
   type AgentEvent,
   type AgentMessage,
+  type AgentOptions,
   type AgentTool,
   type ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
@@ -29,10 +30,7 @@ export interface AgentExecutionOptions {
   signal?: AbortSignal;
   onEvent?: (event: AgentEvent) => void;
   onAgentCreated?: (agent: Agent) => void;
-  transformContext?: (
-    messages: AgentMessage[],
-    signal?: AbortSignal,
-  ) => Promise<AgentMessage[]>;
+  prepareNextTurnWithContext?: AgentOptions["prepareNextTurnWithContext"];
 }
 
 export interface AgentExecutionResult {
@@ -69,7 +67,7 @@ export async function runAgent(
       thinkingLevel: options.thinkingLevel,
     },
     convertToLlm: options.convertToLlm,
-    transformContext: options.transformContext,
+    prepareNextTurnWithContext: options.prepareNextTurnWithContext,
     streamFn: streamSimple,
     getApiKey: options.getApiKey,
     sessionId: options.sessionId,

@@ -560,7 +560,7 @@ export async function runAgentLoop(
       systemPrompt: fullSystemPrompt,
       model,
       messages: prepared.messages,
-      transformContext: prepared.transformContext,
+      prepareNextTurnWithContext: prepared.prepareNextTurnWithContext,
       tools: agentTools,
       thinkingLevel: groupConfig.model?.thinkingLevel ?? "off",
       prompt: promptInput,

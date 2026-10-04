@@ -414,9 +414,9 @@ describe("non-destructive session context maintenance", () => {
       !protectedSession && !disabled ? 30 : 15,
     );
     const shouldCompact = !protectedSession && !disabled;
-    expect(typeof execute.mock.calls.at(-1)?.[0].transformContext).toBe(
-      shouldCompact ? "function" : "undefined",
-    );
+    expect(
+      typeof execute.mock.calls.at(-1)?.[0].prepareNextTurnWithContext,
+    ).toBe(shouldCompact ? "function" : "undefined");
     expect(execute).toHaveBeenCalledTimes(shouldCompact ? 2 : 1);
     const active = await sessions.loadMessages(group, "channel", "main");
     expect(active.some(compaction.isCompactionMessage)).toBe(shouldCompact);
@@ -459,11 +459,18 @@ describe("non-destructive session context maintenance", () => {
       : undefined;
     await run(undefined, { threshold, history });
     const inference = execute.mock.calls.at(-1)?.[0] as AgentExecutionOptions;
-    const projected = await inference.transformContext?.([
-      ...inference.messages,
-      user("New input"),
-    ]);
-    expect(projected).toEqual([...inference.messages, user("New input")]);
+    expect(
+      await inference.prepareNextTurnWithContext?.({
+        message: recent as import("@earendil-works/pi-ai").AssistantMessage,
+        toolResults: [],
+        newMessages: [],
+        context: {
+          messages: [...inference.messages, user("New input")],
+          systemPrompt: inference.systemPrompt,
+          tools: inference.tools,
+        },
+      }),
+    ).toBeUndefined();
     expect(execute).toHaveBeenCalledTimes(shouldCompact ? 2 : 1);
     await run(undefined, {
       threshold,
@@ -471,7 +478,18 @@ describe("non-destructive session context maintenance", () => {
       history: finalOnly ? inference.messages : undefined,
     });
     const next = execute.mock.calls.at(-1)?.[0] as AgentExecutionOptions;
-    await next.transformContext?.([...next.messages, user("New input")]);
+    expect(
+      await next.prepareNextTurnWithContext?.({
+        message: recent as import("@earendil-works/pi-ai").AssistantMessage,
+        toolResults: [],
+        newMessages: [],
+        context: {
+          messages: [...next.messages, user("New input")],
+          systemPrompt: next.systemPrompt,
+          tools: next.tools,
+        },
+      }),
+    ).toBeUndefined();
     expect(execute).toHaveBeenCalledTimes(shouldCompact ? 3 : 2);
   });
 
@@ -687,13 +705,24 @@ describe("non-destructive session context maintenance", () => {
     ).toEqual([]);
   });
 
-  it("compacts repeated tool-loop growth before inference without replacing raw history or replaying tools", async () => {
+  it.each([
+    "success",
+    "provider-error",
+    "template-error",
+    "no-reduction",
+    "aborted-summary",
+  ])("prepares tool-loop context with best-effort compaction and applies steering received during preparation (%s)", async (outcome) => {
     model.contextWindow = 2000;
     const { runAgent } = await vi.importActual<
       typeof import("../../sandbox/agent-execution.js")
     >("../../sandbox/agent-execution.js");
     const normal = execute.getMockImplementation();
     if (!normal) throw new Error("Missing inference fixture");
+    const { createSteeringController } = await import(
+      "../../sandbox/steering.js"
+    );
+    const steering = createSteeringController(group, "channel", "main");
+    const instruction = "Use only verified facts";
     const toolText = "large tool output ".repeat(1000);
     const read = vi.fn(async () => ({
       content: [{ type: "text" as const, text: toolText }],
@@ -703,10 +732,24 @@ describe("non-destructive session context maintenance", () => {
       if (
         typeof options.prompt === "string" &&
         options.prompt.startsWith("Summarize this conversation")
-      )
-        return normal(options);
+      ) {
+        expect(await steering.receive(instruction)).toBe(true);
+        if (outcome === "provider-error")
+          throw new Error("Summary provider unavailable");
+        const result = await normal(options);
+        if (outcome === "template-error")
+          result.response = "Invalid checkpoint";
+        if (outcome === "no-reduction")
+          result.response = summary + "x".repeat(100_000);
+        if (outcome === "aborted-summary") {
+          result.response = "";
+          result.terminalStopReason = "aborted";
+        }
+        return result;
+      }
       return runAgent({
         ...options,
+        onAgentCreated: (agent) => steering.attach(agent),
         tools: [
           {
             name: "read",
@@ -722,8 +765,14 @@ describe("non-destructive session context maintenance", () => {
       const index = stream.mock.calls.length;
       if (index > 1) {
         const sent = JSON.stringify(context.messages);
-        expect(sent).toContain("ID=12345");
-        expect(sent).not.toContain(toolText);
+        expect(sent).toContain(instruction);
+        if (outcome === "success") {
+          expect(sent).toContain("ID=12345");
+          expect(sent).not.toContain(toolText);
+        } else {
+          expect(sent).toContain(toolText);
+          expect(sent).not.toContain("Previous conversation checkpoint");
+        }
       }
       const message =
         index < 3
@@ -754,9 +803,18 @@ describe("non-destructive session context maintenance", () => {
         options.prompt.startsWith("Summarize this conversation"),
     );
     expect(summaries).toHaveLength(2);
-    expect(summaries[1][0].prompt).toContain("ID=12345");
+    if (outcome === "success")
+      expect(summaries[1][0].prompt).toContain("ID=12345");
+    await steering.waitForPersistence();
     const raw = await sessions.loadMessages(group, "channel", "main");
     expect(raw.some(compaction.isCompactionMessage)).toBe(false);
+    expect(
+      raw.filter(
+        (message) =>
+          message.role === "custom" &&
+          message.customType === "steering-instruction",
+      ),
+    ).toHaveLength(2);
     expect(
       raw
         .filter((message) => message.role === "toolResult")
