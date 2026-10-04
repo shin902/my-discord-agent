@@ -7,6 +7,7 @@ import { replaceSessionContext } from "../../agent/session.js";
 import type { initializeSessionBootstrap } from "../../sandbox/session-bootstrap.js";
 import { isSessionTimeAnchorMessage } from "../../sandbox/session-bootstrap.js";
 import {
+  type CompactionMessage,
   type ContextOperation,
   compactSessionContext,
   contextArchiveId,
@@ -15,6 +16,8 @@ import {
   isCompactionMessage,
   isContextInitialization,
   loadContextSegments,
+  splitCompactionHistory,
+  summarizeConversation,
 } from "./compaction.js";
 import type { CompactionConfig } from "./config.js";
 
@@ -173,6 +176,7 @@ export async function preprocessSessionContext(options: {
   }
   return {
     messages,
+    transformContext: createInRunCompaction(options),
     response:
       operation?.action === "compact"
         ? messages.some(
@@ -183,5 +187,83 @@ export async function preprocessSessionContext(options: {
           ? COMPACTED
           : "圧縮対象の古い履歴がありません。履歴はそのまま保持しています。"
         : undefined,
+  };
+}
+
+function createInRunCompaction(
+  options: Parameters<typeof preprocessSessionContext>[0],
+) {
+  const operation = options.operation;
+  if (!options.compaction.enabled || !operation?.allowContextReset)
+    return undefined;
+  const fixedTokens = estimateMessageTokens({
+    role: "user",
+    content:
+      options.systemPrompt +
+      JSON.stringify(
+        options.tools.map(({ name, description, parameters }) => ({
+          name,
+          description,
+          parameters,
+        })),
+      ),
+    timestamp: Date.now(),
+  });
+  let checkpoint: AgentMessage[] | undefined;
+  let consumedMessages = 0;
+  return async (messages: AgentMessage[], signal?: AbortSignal) => {
+    const appended = messages.slice(consumedMessages);
+    const context = checkpoint ? [...checkpoint, ...appended] : messages;
+    const contextTokens = (
+      await options.execution.convertToLlm(context)
+    ).reduce((tokens, message) => tokens + estimateMessageTokens(message), 0);
+    if (
+      Math.max(
+        fixedTokens + contextTokens,
+        estimatePreviousContextTokens(appended),
+      ) <=
+      options.execution.model.contextWindow * options.compaction.threshold
+    )
+      return context;
+    const { older, recent } = splitCompactionHistory(
+      context,
+      Math.min(
+        options.compaction.keepRecentTokens,
+        Math.floor(options.execution.model.contextWindow * 0.2),
+      ),
+    );
+    if (!older.length) return context;
+    const summary = await summarizeConversation(
+      older,
+      { ...options.execution, signal: signal ?? options.execution.signal },
+      options.onUsage,
+    );
+    const next = [
+      ...context.filter(isContextInitialization),
+      {
+        role: "custom",
+        customType: "session-compaction",
+        content: summary,
+        display: false,
+        timestamp: Date.now(),
+        archiveSessionId: options.sessionId,
+        operationId: operation.operationId,
+        contextMode:
+          options.historyMessages === undefined ? "full" : "final-only",
+        recentMessages: recent,
+      } satisfies CompactionMessage,
+    ];
+    const nextTokens = (await options.execution.convertToLlm(next)).reduce(
+      (tokens, message) => tokens + estimateMessageTokens(message),
+      0,
+    );
+    if (nextTokens >= contextTokens)
+      throw new Error(
+        "Context compaction did not reduce the context; original session was preserved",
+      );
+    // Do not replace durable history mid-run: public-final entry references must stay valid.
+    checkpoint = next;
+    consumedMessages = messages.length;
+    return next;
   };
 }

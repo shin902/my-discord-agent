@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { Type } from "typebox";
 import {
   afterAll,
   beforeAll,
@@ -13,23 +14,30 @@ import {
 } from "vitest";
 import type { AgentExecutionOptions } from "../../sandbox/agent-execution.js";
 
-const { execute, model, readCommittedConversations } = vi.hoisted(() => ({
-  execute: vi.fn(),
-  readCommittedConversations: vi.fn(),
-  model: {
-    id: "test",
-    name: "Test",
-    api: "openai-completions",
-    provider: "test",
-    baseUrl: "https://example.com",
-    reasoning: false,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128_000,
-    maxTokens: 8192,
-  },
-}));
+const { execute, stream, model, readCommittedConversations } = vi.hoisted(
+  () => ({
+    execute: vi.fn(),
+    stream: vi.fn(),
+    readCommittedConversations: vi.fn(),
+    model: {
+      id: "test",
+      name: "Test",
+      api: "openai-completions",
+      provider: "test",
+      baseUrl: "https://example.com",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128_000,
+      maxTokens: 8192,
+    },
+  }),
+);
 vi.mock("../../sandbox/agent-execution.js", () => ({ runAgent: execute }));
+vi.mock("@earendil-works/pi-ai/compat", async (original) => ({
+  ...(await original<typeof import("@earendil-works/pi-ai/compat")>()),
+  streamSimple: stream,
+}));
 vi.mock("../../agent/model.js", () => ({ resolveModel: async () => model }));
 vi.mock("../../queue/repository.js", () => ({
   getQueueRepository: () => ({ readCommittedConversations }),
@@ -406,6 +414,9 @@ describe("non-destructive session context maintenance", () => {
       !protectedSession && !disabled ? 30 : 15,
     );
     const shouldCompact = !protectedSession && !disabled;
+    expect(typeof execute.mock.calls.at(-1)?.[0].transformContext).toBe(
+      shouldCompact ? "function" : "undefined",
+    );
     expect(execute).toHaveBeenCalledTimes(shouldCompact ? 2 : 1);
     const active = await sessions.loadMessages(group, "channel", "main");
     expect(active.some(compaction.isCompactionMessage)).toBe(shouldCompact);
@@ -654,6 +665,93 @@ describe("non-destructive session context maintenance", () => {
         "main",
       ),
     ).toEqual([]);
+  });
+
+  it("compacts repeated tool-loop growth before inference without replacing raw history or replaying tools", async () => {
+    model.contextWindow = 2000;
+    const { runAgent } = await vi.importActual<
+      typeof import("../../sandbox/agent-execution.js")
+    >("../../sandbox/agent-execution.js");
+    const normal = execute.getMockImplementation();
+    if (!normal) throw new Error("Missing inference fixture");
+    const toolText = "large tool output ".repeat(1000);
+    const read = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: toolText }],
+      details: {},
+    }));
+    execute.mockImplementation(async (options: AgentExecutionOptions) => {
+      if (
+        typeof options.prompt === "string" &&
+        options.prompt.startsWith("Summarize this conversation")
+      )
+        return normal(options);
+      return runAgent({
+        ...options,
+        tools: [
+          {
+            name: "read",
+            label: "Read",
+            description: "Read",
+            parameters: Type.Object({}),
+            execute: read,
+          },
+        ],
+      });
+    });
+    stream.mockReset().mockImplementation((_model, context) => {
+      const index = stream.mock.calls.length;
+      if (index > 1) {
+        const sent = JSON.stringify(context.messages);
+        expect(sent).toContain("ID=12345");
+        expect(sent).not.toContain(toolText);
+      }
+      const message =
+        index < 3
+          ? {
+              ...assistant(""),
+              stopReason: "toolUse",
+              content: [
+                {
+                  type: "toolCall",
+                  id: `call-${index}`,
+                  name: "read",
+                  arguments: {},
+                },
+              ],
+            }
+          : assistant("Finished");
+      return {
+        async *[Symbol.asyncIterator]() {},
+        result: async () => message,
+      };
+    });
+    await expect(run()).resolves.toBe("Finished");
+    expect(stream).toHaveBeenCalledTimes(3);
+    expect(read).toHaveBeenCalledTimes(2);
+    const summaries = execute.mock.calls.filter(
+      ([options]) =>
+        typeof options.prompt === "string" &&
+        options.prompt.startsWith("Summarize this conversation"),
+    );
+    expect(summaries).toHaveLength(2);
+    expect(summaries[1][0].prompt).toContain("ID=12345");
+    const raw = await sessions.loadMessages(group, "channel", "main");
+    expect(raw.some(compaction.isCompactionMessage)).toBe(false);
+    expect(
+      raw
+        .filter((message) => message.role === "toolResult")
+        .map((message) => message.content),
+    ).toEqual([
+      [{ type: "text", text: toolText }],
+      [{ type: "text", text: toolText }],
+    ]);
+    expect(raw.filter((message) => message.role === "user")).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "New input" }],
+        timestamp: expect.any(Number),
+      },
+    ]);
   });
 
   it("failed ordinary inference after auto compact retries from the already committed checkpoint", async () => {

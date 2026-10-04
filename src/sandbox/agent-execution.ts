@@ -29,6 +29,10 @@ export interface AgentExecutionOptions {
   signal?: AbortSignal;
   onEvent?: (event: AgentEvent) => void;
   onAgentCreated?: (agent: Agent) => void;
+  transformContext?: (
+    messages: AgentMessage[],
+    signal?: AbortSignal,
+  ) => Promise<AgentMessage[]>;
 }
 
 export interface AgentExecutionResult {
@@ -65,6 +69,7 @@ export async function runAgent(
       thinkingLevel: options.thinkingLevel,
     },
     convertToLlm: options.convertToLlm,
+    transformContext: options.transformContext,
     streamFn: streamSimple,
     getApiKey: options.getApiKey,
     sessionId: options.sessionId,

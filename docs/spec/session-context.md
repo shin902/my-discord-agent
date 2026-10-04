@@ -27,7 +27,9 @@ shared channelは親channel、thread / auto-thread / email-modeはthread内で�
 
 objectまたは各fieldが未指定の場合の既定値は上記。不正な設定は実行前にエラーになる。`enabled: false` はautoだけを無効にし、手動compactは利用可能。`threshold` は0より大きく1未満、`keepRecentTokens` は正の整数。recent予算はmodel context windowの20%を上限とする。
 
-Piの実装を参考に、文字数/4と画像の固定コストでtoken数を概算する。判定にはsystem prompt・tool定義・今回の入力を含める。full contextでは直近の実測usageも使うが、checkpoint内のretained assistantの古いusageは圧縮後の使用量として扱わない。判定はjob開始時の1回だけであり、1つのtool loop内での肥大化や単体で巨大な入力を完全に防ぐものではない。
+Piの実装を参考に、文字数/4と画像の固定コストでtoken数を概算する。判定にはsystem prompt・tool定義・今回の入力を含める。full contextでは直近の実測usageも使うが、checkpoint内のretained assistantの古いusageは圧縮後の使用量として扱わない。
+
+job開始前に加え、実行中も各LLM呼び出し前に判定し、tool loopで増えたcontextを同じ要約処理で圧縮する。実行中のcheckpointはそのrun内のLLM入力だけに適用し、後続のmessageと合わせて再利用する。raw履歴の永続appendや採用finalのentry参照は変更せず、toolを再実行しない。次のjobでは保存済みrawに対して通常の開始前compactを行う。`enabled: false` / 保護sessionでは実行中の圧縮も行わない。token概算・要約入力全体の上限には従来の制約があり、context overflow時の自動再試行は行わない。
 
 ## 圧縮と保存
 
@@ -47,7 +49,7 @@ final-onlyでは採用済み公開finalだけを要約対象とし、そのcheck
 
 反対側のcontextはcheckpointの退避先IDを辿って復元する。final-only compact後の通常会話は直前のfull checkpointまたはraw会話を使い、ユーザー制約やtool contextを失わない。full compact後のfinal-onlyは直前のpublic checkpointまたは退避rawの採用済み公開finalを既存のentry参照で選ぶ。privateなuser/tool/途中応答やfull summaryは再注入しない。辿るのは同じownerのcontext継続に必要な退避先だけで、無関係なsessionを検索・注入しない。clearは退避先へ辿るcheckpointを残さないため、両contextの継続が止まる。
 
-Runnerはsession-context featureで履歴の準備・manual操作の早期終了を行い、既存bootstrap / prompt / tool解決後、推論前に1回前処理を呼ぶ。token推定、threshold、manual/auto判断、checkpointの成功・retry判定はfeatureが所有する。Runnerには通常の推論・永続append・usage集計・Discord telemetryだけを残す。generic lifecycle hookやpreprocessing pipelineは導入しない。
+Runnerはsession-context featureで履歴の準備・manual操作の早期終了を行い、既存bootstrap / prompt / tool解決後、推論前に前処理を呼ぶ。featureが返す実行中圧縮処理をPi Agentの既存`transformContext`へ渡す。token推定、threshold、manual/auto判断、checkpointの成功・retry判定はfeatureが所有する。Runnerには通常の推論・永続append・usage集計・Discord telemetryだけを残す。独自のgeneric lifecycle hookやpreprocessing pipelineは導入しない。
 
 ## appendUserOnlyの保護
 

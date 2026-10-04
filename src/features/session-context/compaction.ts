@@ -241,45 +241,12 @@ export async function compactSessionContext(options: {
     keepRecentTokens,
   );
   if (older.length === 0) return options.messages;
-  const transcript = await options.execution.convertToLlm(older);
-  const execution = await runAgent({
-    ...options.execution,
-    systemPrompt: SUMMARY_PROMPT,
-    messages: [],
-    tools: [],
-    thinkingLevel: "off",
-    onAgentCreated: () => options.onStarted?.(),
-    onEvent: (event) => {
-      if (
-        event.type === "message_end" &&
-        event.message.role === "assistant" &&
-        event.message.usage
-      )
-        options.onUsage?.(event.message.usage);
-    },
-    prompt: `Summarize this conversation transcript:\n\n${serializeSummaryTranscript(transcript)}`,
-  });
-  if (
-    options.execution.signal?.aborted ||
-    !execution.response.trim() ||
-    execution.terminalErrorMessage ||
-    execution.terminalStopReason !== "stop"
-  ) {
-    throw new Error(
-      "Context compaction failed; original session was preserved",
-    );
-  }
-  const headings = [...execution.response.matchAll(/^## (.+)$/gm)].map(
-    (match) => match[1],
+  const summary = await summarizeConversation(
+    older,
+    options.execution,
+    options.onUsage,
+    options.onStarted,
   );
-  if (
-    headings.join("|") !==
-    "Goal|User Constraints|Current State|Important Facts|Decisions|Artifacts|Open Loops|Next Steps|Recall"
-  ) {
-    throw new Error(
-      "Context compaction summary does not follow the checkpoint template",
-    );
-  }
   const archiveSessionId = contextArchiveId(
     options.sessionId,
     options.operationId,
@@ -287,7 +254,7 @@ export async function compactSessionContext(options: {
   const checkpoint: CompactionMessage = {
     role: "custom",
     customType: "session-compaction",
-    content: `${execution.response.trim()}\n\nRaw transcript: ${archiveSessionId} (owner: ${options.agentId}).`,
+    content: `${summary}\n\nRaw transcript: ${archiveSessionId} (owner: ${options.agentId}).`,
     display: false,
     timestamp: Date.now(),
     archiveSessionId,
@@ -320,4 +287,55 @@ export async function compactSessionContext(options: {
   if (replaced) return messages;
   // Session ordering prevents concurrent replacement; retries are handled before summarization.
   throw new Error("Context operation was already applied");
+}
+
+export async function summarizeConversation(
+  messages: AgentMessage[],
+  executionOptions: Pick<
+    AgentExecutionOptions,
+    "model" | "convertToLlm" | "getApiKey" | "signal"
+  >,
+  onUsage?: (usage: Usage) => void,
+  onStarted?: () => void,
+): Promise<string> {
+  const transcript = await executionOptions.convertToLlm(messages);
+  const execution = await runAgent({
+    ...executionOptions,
+    systemPrompt: SUMMARY_PROMPT,
+    messages: [],
+    tools: [],
+    thinkingLevel: "off",
+    onAgentCreated: () => onStarted?.(),
+    onEvent: (event) => {
+      if (
+        event.type === "message_end" &&
+        event.message.role === "assistant" &&
+        event.message.usage
+      )
+        onUsage?.(event.message.usage);
+    },
+    prompt: `Summarize this conversation transcript:\n\n${serializeSummaryTranscript(transcript)}`,
+  });
+  if (
+    executionOptions.signal?.aborted ||
+    !execution.response.trim() ||
+    execution.terminalErrorMessage ||
+    execution.terminalStopReason !== "stop"
+  ) {
+    throw new Error(
+      "Context compaction failed; original session was preserved",
+    );
+  }
+  const headings = [...execution.response.matchAll(/^## (.+)$/gm)].map(
+    (match) => match[1],
+  );
+  if (
+    headings.join("|") !==
+    "Goal|User Constraints|Current State|Important Facts|Decisions|Artifacts|Open Loops|Next Steps|Recall"
+  ) {
+    throw new Error(
+      "Context compaction summary does not follow the checkpoint template",
+    );
+  }
+  return execution.response.trim();
 }
