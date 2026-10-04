@@ -81,6 +81,8 @@ systemd等で管理している環境では`pnpm start`を二重起動せず、�
 
 session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions.sqlite`に保存する。`runtime.sqlite`はqueue・delivery・admission等のControl Plane、session DBはconversation/task trajectoryのData Planeである。session storeはSQLiteのversioned schemaを使い、`sessions`でidentityを管理し、`session_entries`へメッセージをappendする。
 
+[clear / compact](spec/session-context.md) は旧sessionを退避IDへrenameしてから元IDをfresh/checkpointで置き換える。raw entry IDと採用会話参照は維持し、recent履歴はcheckpoint内に保持してraw会話の二重登録を避ける。schema v6のままで新規table・一括変換は不要。
+
 DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.sqlite`は公開されない。DB backupは稼働停止中にcopyするかSQLite backup APIを使い、WAL運用へ変更した場合にmain fileだけをcopyしない。
 
 `session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存し、LLM contextには含めません。schema v6では同じgroup内の論理session identityは `(agent_id,id)`、entry所属は `(agent_id,session_id)` 複合FKです。v5で導入した`sessions.agent_id`はgroup内のownerの正本で、未設定の通常会話は`main`、Botを設定したchannel会話・cron・Bot TaskはBot IDです。Bot registryからBotを削除しても保存済みownerは変えません。`bot_task_sessions`はTaskのadmission/list/resume用であり、実行時のowner照合には使用しません。owner別のread-only trajectoryはuser entryを持つsessionだけをgroup DB内でsession作成時刻・ID、entry sequence順に走査します。未公開のsnapshot-only Bot sessionは含めません。既存sessionへの追記・renameはownerを変更しません。

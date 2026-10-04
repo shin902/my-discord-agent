@@ -23,6 +23,7 @@ vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 const resolveSessionContext = vi.hoisted(() => vi.fn());
 vi.mock("../features/session-context/final-only.js", () => ({
   resolveSessionContext,
+  resolvePublicCompactionHistory: vi.fn().mockResolvedValue([]),
 }));
 const loadMessages = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 vi.mock("../agent/session.js", async (importOriginal) => ({
@@ -1438,6 +1439,7 @@ describe("processMessage - allowMention", () => {
       "hello",
       expect.objectContaining({
         historyMessages,
+        contextOperationId: msg.id,
         agentId: botId ?? "main",
         onDiscordEvent: expect.any(Function),
         attachments,
@@ -1447,6 +1449,28 @@ describe("processMessage - allowMention", () => {
           botId: "secondary",
           channelId: "ch-1",
         },
+      }),
+    );
+  });
+
+  it.each([
+    "clear",
+    "compact",
+  ] as const)("executes ordered %s maintenance with a stable operation identity", async (contextAction) => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+    });
+    const msg = makeMsg({ contextAction, content: "" });
+    await processMessage(msg);
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
+      "default",
+      "ch-1",
+      "",
+      expect.objectContaining({
+        contextAction,
+        contextOperationId: msg.id,
+        agentId: "main",
       }),
     );
   });

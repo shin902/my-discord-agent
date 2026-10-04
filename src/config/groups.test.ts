@@ -17,6 +17,43 @@ const setupRawGroups = async (raw: unknown) => {
 };
 
 describe("loadGroups", () => {
+  it("preserves compaction settings through trusted layers and validates threshold/token limits", async () => {
+    const settings = {
+      enabled: true,
+      threshold: 0.7,
+      keepRecentTokens: 20_000,
+    };
+    const { loadGroups, AgentConfigSchema } = await setupRawGroups([
+      {
+        name: "group",
+        channels: [
+          {
+            channelId: "channel",
+            sessionMode: "shared",
+            compaction: { enabled: false },
+          },
+        ],
+        compaction: settings,
+      },
+    ]);
+    const { resolveAgentConfig } = await import("./agent-resolution.js");
+    const [group] = await loadGroups();
+    expect(resolveAgentConfig(group).compaction).toEqual(settings);
+    expect(resolveAgentConfig(group, group.channels[0]).compaction).toEqual({
+      enabled: false,
+    });
+    for (const compaction of [
+      { threshold: 0 },
+      { threshold: 1 },
+      { threshold: "0.7" },
+      { keepRecentTokens: 0 },
+      { keepRecentTokens: 1.5 },
+      { enabled: "true" },
+    ]) {
+      expect(AgentConfigSchema.safeParse({ compaction }).success).toBe(false);
+    }
+  });
+
   it.each([
     [undefined, undefined, undefined],
     [undefined, true, true],

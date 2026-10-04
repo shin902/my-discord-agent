@@ -55,6 +55,12 @@ export const ContextFileConfigSchema = z.object({
 
 export type ContextFileConfig = z.infer<typeof ContextFileConfigSchema>;
 
+export const CompactionConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  threshold: z.number().gt(0).lt(1).optional(),
+  keepRecentTokens: z.number().int().positive().optional(),
+});
+
 /** Effective agent configuration after all trusted layers are resolved. */
 export interface AgentConfig {
   agentMemory?: AgentMemorySettings;
@@ -65,6 +71,7 @@ export interface AgentConfig {
   skills?: SkillSelection;
   mounts?: MountConfig[];
   contextFiles?: ContextFileConfig[];
+  compaction?: z.infer<typeof CompactionConfigSchema>;
 }
 
 // 各信頼済み設定階層で指定できる共通override設定（agentMemoryは含めない）。
@@ -78,6 +85,7 @@ export const AgentConfigSchema = z.object({
   skills: SkillSelectionSchema.optional(),
   mounts: z.array(MountConfigSchema).optional(),
   contextFiles: z.array(ContextFileConfigSchema).optional(),
+  compaction: CompactionConfigSchema.optional(),
 });
 
 // sandboxへ渡す実行設定。group限定のtoolLogArgsはagentのイベント整形に必要だが、

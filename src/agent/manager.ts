@@ -611,6 +611,9 @@ export interface SendMessageOptions {
   onConversation?: (entries: ConversationEntries) => void;
   /** Optional projected prior-run history; undefined replays the canonical history. */
   historyMessages?: AgentMessage[];
+  contextAction?: "clear" | "compact";
+  contextOperationId?: string;
+  publicHistoryMessages?: AgentMessage[];
   onDiscordEvent?: (event: DiscordEvent) => void;
   attachments?: AttachmentRef[];
   /** Container-local image paths to include in the initial user message. */
@@ -665,6 +668,15 @@ export async function sendMessage(
     groupsEntry,
     options.configOverride,
   );
+  const allowContextReset = !groupsEntry?.channels?.some(
+    (channel) =>
+      channel.channelId === sessionId && channel.appendUserOnly === true,
+  );
+  if (options.contextAction && !allowContextReset) {
+    throw new NonRetryableError(
+      "appendUserOnly sessionではclear/compactを実行できません",
+    );
+  }
 
   const resolvedModel = await resolveModelConfig(effectiveConfig.model);
 
@@ -763,16 +775,17 @@ export async function sendMessage(
   }
 
   const agentTimeoutMs = await loadAgentTimeoutMs();
-  await prepareInitialMemory(
-    effectiveConfig.agentMemory,
-    path.join(ROOT, "groups", groupName),
-    groupName,
-    sessionId,
-    options.agentId,
-    content,
-    agentTimeoutMs,
-    signal,
-  );
+  if (!options.contextAction)
+    await prepareInitialMemory(
+      effectiveConfig.agentMemory,
+      path.join(ROOT, "groups", groupName),
+      groupName,
+      sessionId,
+      options.agentId,
+      content,
+      agentTimeoutMs,
+      signal,
+    );
   const botCatalog =
     enableBotTool !== false && effectiveConfig.tools?.includes("bot") === true
       ? Object.entries(await loadBotRegistry())
@@ -806,6 +819,12 @@ export async function sendMessage(
     sessionId,
     agentId: options.agentId,
     content: promptContent,
+    publicHistoryMessages: options.publicHistoryMessages ?? [],
+    contextOperation: {
+      action: options.contextAction,
+      operationId: options.contextOperationId ?? randomUUID(),
+      allowContextReset,
+    },
     ...(imagePaths?.length ? { imagePaths } : {}),
     ...(options.source ? { source: options.source } : {}),
     ...(options.historyMessages !== undefined

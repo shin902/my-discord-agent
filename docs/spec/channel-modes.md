@@ -26,7 +26,7 @@ Channel の `sessionMode` はDiscord channel/threadをsessionへ対応付ける�
 
 上表は `appendUserOnly` が未指定 / `false` の場合。`requiredMention: true` を指定したチャンネルでは、この表の「反応する」通常メッセージのうち、現在のDiscord Botへのメンションを含むものだけを処理する。スレッドでは親チャンネルの設定を参照するため、親チャンネルとその配下スレッドに同じ `requiredMention` ポリシーが適用される。
 
-Slash command は通常メッセージの取り込み経路を通らないため、`requiredMention` の対象外。現在の `/bot` と、将来追加する `/new` などのコマンドもメンション不要で利用できる設計とする。
+Slash command は通常メッセージの取り込み経路を通らないため、`requiredMention` の対象外。`/bot`・`/skill`・`/clear`・`/compact` もメンション不要で利用できる。contextの切替は [clear / compact](session-context.md) を参照。
 
 ---
 
@@ -42,7 +42,7 @@ Slash command は通常メッセージの取り込み経路を通らないため
 
 同一channelのlive appendだけ到着順に保存し、source IDで重複排除する。保存失敗はhost logに残し、応答・replay復旧はしない。
 
-session-wide modeではない。cron、`/skill`、`/bot`、既存queueなど他経路は従来どおりで、同じsessionのassistant / toolResult / custom entryも許容する。
+Agent実行を禁止するsession-wide modeではない。cron、`/skill`、`/bot`、既存queueなど他経路は従来どおりで、同じsessionのassistant / toolResult / custom entryも許容する。ただし蓄積履歴を置き換えないため、このchannel IDのsessionでは `/clear`・`/compact` を拒否し、auto compactも入口やcron overrideに関係なく実行しない。
 
 `false` に戻して再起動すれば同じsessionを通常Agentとして再利用できる。contextFilesは既存のgeneric bootstrap判定（Agent execution evidenceの有無）に従う。専用初期化stateは持たない。
 

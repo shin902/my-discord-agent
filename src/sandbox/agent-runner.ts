@@ -24,7 +24,11 @@ import {
   type ConversationEntries,
 } from "../agent/conversation.js";
 import { resolveModel } from "../agent/model.js";
-import { appendMessage, loadMessages } from "../agent/session.js";
+import {
+  appendMessage,
+  loadMessages,
+  replaceSessionContext,
+} from "../agent/session.js";
 import { type SessionSource, SessionSourceSchema } from "../agent/source.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import {
@@ -32,6 +36,17 @@ import {
   AgentRuntimeConfigSchema,
 } from "../config/groups.js";
 import { convertInitialMemoryToLlm } from "../features/agent-memory/memory-context.js";
+import {
+  type ContextOperation,
+  compactSessionContext,
+  contextArchiveId,
+  estimateMessageTokens,
+  estimatePreviousContextTokens,
+  expandCompaction,
+  isCompactionMessage,
+  isContextInitialization,
+  publicCheckpointHistory,
+} from "../features/session-context/compaction.js";
 import {
   formatSkillCommandPrompt,
   parseSkillCommand,
@@ -264,8 +279,12 @@ function decorateToolResultForLlm(msg: AgentMessage): AgentMessage {
  *   pi-agent-core 標準の convertToLlm に委譲する。未知の role を無効なまま LLM へ渡さないため。 */
 export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
   const bootstrapSeen = new Set<string>();
-  return messages.flatMap((msg) => {
-    if (isSystemPromptSnapshotMessage(msg) || isSessionTimeAnchorMessage(msg))
+  return expandCompaction(messages).flatMap((msg) => {
+    if (
+      getCustomType(msg) === "session-context-reset" ||
+      isSystemPromptSnapshotMessage(msg) ||
+      isSessionTimeAnchorMessage(msg)
+    )
       return [];
     const memoryMessages = convertInitialMemoryToLlm(msg, bootstrapSeen);
     if (memoryMessages !== undefined) return memoryMessages;
@@ -303,6 +322,8 @@ export async function runAgentLoop(
   onConversation?: (entries: ConversationEntries) => void,
   imagePaths?: string[],
   historyMessages?: AgentMessage[],
+  contextOperation?: ContextOperation,
+  publicHistoryMessages: AgentMessage[] = [],
 ): Promise<string> {
   const modelConfig = groupConfig.model;
   if (!modelConfig) {
@@ -327,6 +348,41 @@ export async function runAgentLoop(
     sessionId,
     identity.agentId,
   );
+  if (contextOperation?.action && !contextOperation.allowContextReset) {
+    throw new Error("appendUserOnly sessionではclear/compactを実行できません");
+  }
+  const alreadyReplaced =
+    contextOperation &&
+    rawMessages.some(
+      (message) =>
+        message.role === "custom" &&
+        "operationId" in message &&
+        message.operationId === contextOperation.operationId,
+    );
+  if (contextOperation?.action === "clear") {
+    if (!alreadyReplaced) {
+      await replaceSessionContext(
+        groupName,
+        sessionId,
+        identity.agentId,
+        contextArchiveId(sessionId, contextOperation.operationId),
+        [
+          {
+            role: "custom",
+            customType: "session-context-reset",
+            content: "",
+            display: false,
+            timestamp: Date.now(),
+            operationId: contextOperation.operationId,
+          } as CustomMessage,
+        ],
+      );
+    }
+    return "コンテキストをクリアしました。旧履歴はsession-logsで検索できます。";
+  }
+  if (contextOperation?.action === "compact" && alreadyReplaced) {
+    return "コンテキストを圧縮しました。旧履歴はsession-logsで検索できます。";
+  }
   const bootstrap = await initializeSessionBootstrap(
     groupName,
     sessionId,
@@ -334,10 +390,14 @@ export async function runAgentLoop(
     groupConfig,
     identity,
   );
-  const messages =
+  let messages =
     historyMessages === undefined
       ? bootstrap.messages
-      : [...bootstrap.initialMessages, ...historyMessages];
+      : [
+          ...bootstrap.initialMessages,
+          ...publicCheckpointHistory(rawMessages),
+          ...historyMessages,
+        ];
   const { skills } = bootstrap;
 
   // `./command スキル名` 形式のメッセージは、LLMの自律判断を待たずに
@@ -495,11 +555,6 @@ export async function runAgentLoop(
   );
   delegationContext.tools = agentTools;
 
-  const pendingAppends: Promise<void>[] = [];
-  let sourceAttached = false;
-  let userEntryId: number | undefined;
-  let assistantEntryId: number | undefined;
-  let response = "";
   let assistantTurns = 0;
   let aggregatedUsage: AgentTokenUsage = {
     input: 0,
@@ -509,11 +564,106 @@ export async function runAgentLoop(
     totalTokens: 0,
   };
   let hasUsage = false;
+  const promptStartedAt = Date.now();
+  const threshold = groupConfig.compaction?.threshold ?? 0.7;
+  const promptTokens =
+    typeof promptInput === "string"
+      ? Math.ceil(promptInput.length / 4)
+      : promptInput.reduce(
+          (tokens, message) => tokens + estimateMessageTokens(message),
+          0,
+        );
+  const projectedTokens = Math.max(
+    estimateMessageTokens({
+      role: "user",
+      content:
+        fullSystemPrompt +
+        JSON.stringify(
+          agentTools.map(({ name, description, parameters }) => ({
+            name,
+            description,
+            parameters,
+          })),
+        ),
+      timestamp: Date.now(),
+    }) +
+      defaultConvertToLlm(messages).reduce(
+        (tokens, message) => tokens + estimateMessageTokens(message),
+        0,
+      ) +
+      promptTokens,
+    historyMessages === undefined
+      ? estimatePreviousContextTokens(messages) + promptTokens
+      : 0,
+  );
+  if (
+    contextOperation?.allowContextReset &&
+    !alreadyReplaced &&
+    (contextOperation.action === "compact" ||
+      (groupConfig.compaction?.enabled !== false &&
+        projectedTokens > model.contextWindow * threshold))
+  ) {
+    try {
+      const initialMessages = bootstrap.messages.filter(
+        isContextInitialization,
+      );
+      if (!initialMessages.some(isSessionTimeAnchorMessage))
+        initialMessages.push({
+          role: "custom",
+          customType: "session-time-anchor",
+          content: String(bootstrap.sessionAnchorTimestamp),
+          display: false,
+          timestamp: bootstrap.sessionAnchorTimestamp,
+        });
+      messages = await compactSessionContext({
+        groupName,
+        sessionId,
+        agentId: identity.agentId,
+        operationId: contextOperation.operationId,
+        messages,
+        fullMessages: bootstrap.messages,
+        initialMessages,
+        contextMode: historyMessages === undefined ? "full" : "final-only",
+        config: groupConfig,
+        publicHistoryMessages,
+        onStarted: contextOperation.onCompactionStarted,
+        onUsage: (usage) => {
+          aggregatedUsage = addTokenUsage(aggregatedUsage, usage);
+          assistantTurns++;
+          hasUsage = true;
+        },
+        execution: {
+          model,
+          convertToLlm: defaultConvertToLlm,
+          getApiKey,
+          signal,
+        },
+      });
+    } finally {
+      process.stderr.write(
+        `__DISCORD_EVENT__:${JSON.stringify({ type: "agent_timing", promptMs: Date.now() - promptStartedAt, assistantTurns, ...(hasUsage ? { usage: aggregatedUsage } : {}) })}\n`,
+      );
+    }
+  }
+  if (contextOperation?.action === "compact") {
+    return messages.some(
+      (message) =>
+        isCompactionMessage(message) &&
+        message.operationId === contextOperation.operationId,
+    )
+      ? "コンテキストを圧縮しました。旧履歴はsession-logsで検索できます。"
+      : "圧縮対象の古い履歴がありません。履歴はそのまま保持しています。";
+  }
+
+  const pendingAppends: Promise<void>[] = [];
+  let sourceAttached = false;
+  let userEntryId: number | undefined;
+  let assistantEntryId: number | undefined;
+  let response = "";
   let stopReason: string | undefined;
 
   // runAgent owns Agent construction and prompt execution. This callback keeps
   // persistent-session concerns (append and Discord event formatting) here.
-  const promptStartedAt = Date.now();
   try {
     const execution = await runAgent({
       systemPrompt: fullSystemPrompt,
@@ -655,26 +805,30 @@ export async function runAgentLoop(
   return response;
 }
 
+const HistoryMessageSchema = z.custom<AgentMessage>(
+  (value) =>
+    typeof value === "object" &&
+    value !== null &&
+    "role" in value &&
+    ["user", "assistant", "toolResult", "custom"].includes(String(value.role)),
+);
+
 const PayloadSchema = z.object({
   groupName: z.string(),
   sessionId: z.string(),
   agentId: z.string().min(1),
   content: z.string(),
+  contextOperation: z
+    .object({
+      action: z.enum(["clear", "compact"]).optional(),
+      operationId: z.string().min(1),
+      allowContextReset: z.boolean(),
+    })
+    .optional(),
   imagePaths: z.array(z.string().startsWith("/workspace/")).optional(),
   source: SessionSourceSchema.optional(),
-  historyMessages: z
-    .array(
-      z.custom<AgentMessage>(
-        (value) =>
-          typeof value === "object" &&
-          value !== null &&
-          "role" in value &&
-          ["user", "assistant", "toolResult", "custom"].includes(
-            String(value.role),
-          ),
-      ),
-    )
-    .optional(),
+  publicHistoryMessages: z.array(HistoryMessageSchema).default([]),
+  historyMessages: z.array(HistoryMessageSchema).optional(),
   groupConfig: AgentRuntimeConfigSchema,
   systemPromptSnapshotContent: z.string().optional(),
   systemPromptSnapshotPresent: z.boolean().optional(),
@@ -787,6 +941,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       })();
     });
 
+    let activeAnnounced = false;
+    const announceActive = () => {
+      if (!activeAnnounced) process.stderr.write("__AGENT_ACTIVE__\n");
+      activeAnnounced = true;
+    };
     let response: string;
     try {
       response = await runAgentLoop(
@@ -799,7 +958,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         payload.botToolConfig,
         (agent) => {
           steering.attach(agent);
-          process.stderr.write("__AGENT_ACTIVE__\n");
+          announceActive();
         },
         abortController.signal,
         payload.toolProxyEndpoint,
@@ -811,6 +970,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         },
         payload.imagePaths,
         payload.historyMessages,
+        payload.contextOperation
+          ? { ...payload.contextOperation, onCompactionStarted: announceActive }
+          : undefined,
+        payload.publicHistoryMessages,
       );
     } catch (error) {
       // Initialization failures must reject pre-attach requests without

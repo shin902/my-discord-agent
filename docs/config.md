@@ -23,7 +23,7 @@ groups/{name}/
   AGENTS.md                # グループのシステムプロンプト
 ```
 
-AgentConfig（`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` / `agentMemory`）は、コンテナにマウントされない静的設定として管理する。通常のDiscord会話では `group → Bot profile（指定時） → channel`、cronでは配送先のchannel/thread設定を継承せず `group → Bot profile（botId指定時） → cron job` の順で解決する。`groups/{name}/` はコンテナに書き込み可能な領域としてマウントされるため、エージェント自身が設定を書き換えられないようにする。`agentMemory.enabled` はGroup / Bot profile限定のオプトイン設定で、MainはGroup、Botは未指定ならGroupを継承し、明示booleanで上書きする（Channel / cron job overrideはない）。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronからはoverrideできない。
+AgentConfig（`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` / `compaction` / `agentMemory`）は、コンテナにマウントされない静的設定として管理する。通常のDiscord会話では `group → Bot profile（指定時） → channel`、cronでは配送先のchannel/thread設定を継承せず `group → Bot profile（botId指定時） → cron job` の順で解決する。`groups/{name}/` はコンテナに書き込み可能な領域としてマウントされるため、エージェント自身が設定を書き換えられないようにする。`agentMemory.enabled` はGroup / Bot profile限定のオプトイン設定で、MainはGroup、Botは未指定ならGroupを継承し、明示booleanで上書きする（Channel / cron job overrideはない）。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronからはoverrideできない。
 
 | ファイル | 必須 | トップレベル形式 | 内容 |
 |---|---|---|---|
@@ -228,6 +228,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `mounts` | — | AgentConfig。コンテナへの追加マウント設定。channelで指定するとgroupのmountsを完全置換 |
 | `agentMemory` | — | Group / Bot profile限定。`{ "enabled": true }` で有効化。未指定のGroupは無効、未指定のBotはGroupを継承。明示した `enabled` はboolean必須。Channel / cron jobでは指定不可。詳細は [Agent Memory](agent-memory.md#owner別markdownと新規sessionの初回選択) |
 | `contextFiles` | — | AgentConfig。workspace相対ファイルを配列順にsession初回のuser roleへ注入する。各要素は `{ "path": string, "maxChars": 正の整数 | "*" }`。`"*"` は無制限。absolute pathと`..`は禁止し、不存在ファイルは無視する。子layerの配列は完全置換し、`[]`で無効化 |
+| `compaction` | `{ "enabled": true, "threshold": 0.7, "keepRecentTokens": 20000 }` | AgentConfig。推論前の自動圧縮。`enabled: false` はautoだけを停止。objectを完全置換し、未指定の内側fieldは既定値になる。`appendUserOnly` sessionは設定に関係なく対象外。詳細は [clear / compact](spec/session-context.md) |
 
 有効な追加mountがある場合、Agentのsystem contextにはcontainer側pathと読み書き権限（`ro` / `rw`）を列挙し、既存mountの直接利用を促す。host側pathは表示しない。mount未設定時はこの案内を追加せず、作業ディレクトリは引き続き `/workspace` とする。
 
@@ -453,7 +454,7 @@ Botのauthority modelと、`bot` capabilityを明示的に許可する理由は 
 
 ## config/bots.json
 
-Agent Bot profile の canonical source です。トップレベルに Bot ID をキーとする map を置きます。各 profile は所属する `group`、caller-facing の空でない `description`、Bot本人向けの空でない `instructions`、任意の AgentConfig（`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` / `agentMemory`）を持ちます。`config/config.json` の `discord.bots` は Discord application の接続設定であり、Agent Bot profile とは別の設定です。両ファイルの `bots` はmergeされません。
+Agent Bot profile の canonical source です。トップレベルに Bot ID をキーとする map を置きます。各 profile は所属する `group`、caller-facing の空でない `description`、Bot本人向けの空でない `instructions`、任意の AgentConfig（`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` / `compaction` / `agentMemory`）を持ちます。`config/config.json` の `discord.bots` は Discord application の接続設定であり、Agent Bot profile とは別の設定です。両ファイルの `bots` はmergeされません。
 
 ```json
 {

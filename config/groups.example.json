@@ -2,6 +2,11 @@
   {
     "name": "default",
     "agentMemory": { "enabled": false },
+    "compaction": {
+      "enabled": true,
+      "threshold": 0.7,
+      "keepRecentTokens": 20000
+    },
     "model": {
       "provider": "zai-custom",
       "modelId": "glm-4.7-flash"

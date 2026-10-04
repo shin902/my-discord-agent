@@ -26,7 +26,10 @@ import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
-import { resolveSessionContext } from "../features/session-context/final-only.js";
+import {
+  resolvePublicCompactionHistory,
+  resolveSessionContext,
+} from "../features/session-context/final-only.js";
 import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import { NonRetryableError } from "../utils/error.js";
 import { loadBotTaskSystemPrompt } from "./bot-task-sessions.js";
@@ -787,6 +790,11 @@ async function processCronThreadDelivery(
         try {
           return await sendMessage(msg.groupName, sessionId, msg.content, {
             agentId,
+            contextOperationId: msg.id,
+            publicHistoryMessages: await resolvePublicCompactionHistory(
+              { ...msg, sessionId },
+              agentId,
+            ),
             historyMessages: resolveSessionContext(
               { ...msg, sessionId },
               agentId,
@@ -1156,6 +1164,12 @@ export async function processMessage(
               msg.content,
               {
                 agentId,
+                contextAction: msg.contextAction,
+                contextOperationId: msg.id,
+                publicHistoryMessages: await resolvePublicCompactionHistory(
+                  msg,
+                  agentId,
+                ),
                 historyMessages: resolveSessionContext(msg, agentId),
                 imagePaths: images?.imagePaths,
                 onDiscordEvent: (event) => {

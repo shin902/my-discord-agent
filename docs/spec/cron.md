@@ -84,6 +84,7 @@ data/cron/
 | `toolSets` | オプション | string[] | AgentConfig。trusted capability permission set（agent-reach/arxiv-search/arxiv-survey/last30days/web/github/mail/calendar/weather）。未指定ならgroupを継承し、指定配列は完全置換、`[]`で解除。未知名と `"*"` は設定エラー |
 | `mounts` | オプション | object[] | AgentConfig。コンテナへの追加マウント。親のmounts配列を完全置換 |
 | `contextFiles` | オプション | object[] | AgentConfig。workspace相対ファイルをsession初回のuser roleへ注入する。親の配列を完全置換し、`[]`で無効化 |
+| `compaction` | オプション | object | AgentConfig。auto compactの `enabled` / `threshold` / `keepRecentTokens`。既定と保護対象は [session context](session-context.md) を参照 |
 | `settings` | オプション | unknown | ハンドラー固有の設定値置き場。中身は検証せずそのまま `CronContext.settings` 経由でハンドラーに渡す。ハンドラー側で必要な型にキャスト、または自前で Zod パースして使う |
 
 handlerが設定されてる場合、JSONの全フィールドは `CronContext` に詰めてハンドラーに渡す。"handler なし時必須" フィールドはhandlerありの場合オプション扱いになるが、記載すればハンドラーから参照できる。
@@ -160,7 +161,7 @@ cron jobに `"historyMode": "final-only"` を明示した場合、次runのLLM c
 
 Mainとjobの `botId` で選択されたBotは共通contractを使う。jobのhistoryModeは `enqueueCronInbox()` でqueue入力に保存し、pollerは保存済みmodeを使う。設定変更は再起動後の新規enqueueに適用し、受付済みqueueのpolicyは変えない。channel・group・Bot profileにはこの設定を設けず、通常のDiscord入力や同期 `bot run/resume`・`/bot` Taskには継承しない。handlerがenqueue時に `fresh` を選んだ場合は過去runの履歴を引き継がず、final-only projectionは行わない。既存のMail handlerは常に `fresh` を使うため対象外。
 
-初版は採用順に過去finalを全件引き継ぎ、件数/token上限やLLMによる要約は設けない。finalは成功結果commit時のassistant entry参照で識別し、非空textの `stop` / `length` 応答だけを使う。tool call/result、途中assistant、過去user/event、skill invocation、steering instructionは自動再注入しない。system prompt・contextFiles・保存済み初回Agent Memoryなどの初期snapshotは維持し、今回のskill invocationやsteerは通常どおり届く。
+採用順に過去finalを引き継ぐ。contextが閾値を超える場合は [共通auto compact](session-context.md) により公開finalだけからcheckpointを作り、要約 + recent公開finalで継続する。full compactのprivateな要約はfinal-onlyへ流用せず、checkpointに保存した公開projectionを使う。finalは成功結果commit時のassistant entry参照で識別し、非空textの `stop` / `length` 応答だけを使う。tool call/result、途中assistant、過去user/event、skill invocation、steering instructionは自動再注入しない。system prompt・contextFiles・保存済み初回Agent Memoryなどの初期snapshotは維持し、今回のskill invocationやsteerは通常どおり届く。
 
 失敗・キャンセル・finalなし・採用されなかったretryは除外する。`<NO_REPLY>` / `discordOutput: "none"` など配信を抑制した結果も含めない。「公開」は配送対象の成功結果として採用された時点を意味し、Discord配送完了は待たない。raw trajectoryは削除・圧縮・書き換えず保持する。識別参照や配信可否のmetadataがない旧履歴は推測して採用しない。[保存・移行](../storage.md#session-trajectory)も参照。
 

@@ -239,6 +239,33 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(args).toContain("localhost:5050/my-discord-agent-runner:latest");
   });
 
+  it("protects appendUserOnly sessions at the runner boundary for every caller while allowing ordinary execution", async () => {
+    const { sendMessage } = await import("./manager.js");
+    findGroupMock.mockResolvedValue({
+      name: "test-group",
+      channels: [
+        { channelId: "capture", sessionMode: "shared", appendUserOnly: true },
+      ],
+    });
+    for (const contextAction of ["clear", "compact"] as const) {
+      await expect(
+        sendMessage("test-group", "capture", "", {
+          agentId: "main",
+          contextAction,
+        }),
+      ).rejects.toThrow("appendUserOnly");
+    }
+    expect(spawnMock).not.toHaveBeenCalled();
+    await sendMessage("test-group", "capture", "cron or skill input", {
+      agentId: "main",
+      contextOperationId: "queue-job",
+    });
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    expect(
+      JSON.parse(proc.stdin.write.mock.calls[0][0]).contextOperation,
+    ).toEqual({ operationId: "queue-job", allowContextReset: false });
+  });
+
   it("shutdown開始後の新規sendMessageはDockerをspawnしない", async () => {
     const { beginManagerShutdown, sendMessage } = await import("./manager.js");
 

@@ -341,6 +341,66 @@ export async function renameSession(
   }
 }
 
+export async function replaceSessionContext(
+  groupName: string,
+  sessionId: string,
+  agentId: string,
+  archiveSessionId: string,
+  messages: AgentMessage[],
+): Promise<boolean> {
+  validateName(groupName, "グループ名");
+  validateName(sessionId, "セッションID");
+  validateName(archiveSessionId, "退避セッションID");
+  validateOwner(agentId);
+  if (sessionId === archiveSessionId)
+    throw new Error("退避先が元sessionと同一です");
+  const db = await openDatabase(groupName);
+  try {
+    return db
+      .transaction(() => {
+        // A queue retry after the session commit must not rotate the fresh side again.
+        if (
+          db
+            .prepare("SELECT 1 FROM sessions WHERE agent_id=? AND id=?")
+            .get(agentId, archiveSessionId)
+        )
+          return false;
+        const now = Date.now();
+        db.prepare(
+          "INSERT INTO sessions(id,created_at,updated_at,agent_id) VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
+        ).run(sessionId, now, now, agentId);
+        const source = db
+          .prepare("SELECT kind FROM sessions WHERE agent_id=? AND id=?")
+          .get(agentId, sessionId) as { kind: string };
+        // A per-run cron's retention must not delete history retained by compact.
+        db.prepare(
+          "UPDATE sessions SET id=?, kind='conversation' WHERE agent_id=? AND id=?",
+        ).run(archiveSessionId, agentId, sessionId);
+        db.prepare(
+          "INSERT INTO sessions(id,kind,created_at,updated_at,agent_id) VALUES (?,?,?,?,?)",
+        ).run(sessionId, source.kind, now, now, agentId);
+        const insert = db.prepare(
+          "INSERT INTO session_entries(session_id,agent_id,sequence,entry_type,payload_json,created_at) VALUES (?,?,?,?,?,?)",
+        );
+        for (const [index, message] of messages.entries()) {
+          const sanitized = sanitizeMessage(message);
+          insert.run(
+            sessionId,
+            agentId,
+            index,
+            entryType(sanitized),
+            JSON.stringify(sanitized),
+            messageTimestamp(sanitized),
+          );
+        }
+        return true;
+      })
+      .immediate();
+  } finally {
+    db.close();
+  }
+}
+
 export async function appendMessage(
   groupName: string,
   sessionId: string,

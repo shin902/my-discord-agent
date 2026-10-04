@@ -1,9 +1,10 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ConversationEntries } from "../../agent/conversation.js";
-import { readSessionEntries } from "../../agent/session.js";
+import { loadMessages, readSessionEntries } from "../../agent/session.js";
 import { getQueueRepository } from "../../queue/repository.js";
 import type { InboxMessage } from "../../queue/types.js";
+import { publicCheckpointHistory } from "./compaction.js";
 
 /** Select exact adopted finals, never infer them from adjacent raw messages. */
 export function projectSessionContext(
@@ -35,6 +36,20 @@ export function projectSessionContext(
   return [...finals.values()];
 }
 
+export async function resolvePublicCompactionHistory(
+  input: InboxMessage,
+  agentId: string,
+): Promise<AgentMessage[]> {
+  const raw = await loadMessages(input.groupName, input.sessionId, agentId);
+  return [
+    ...publicCheckpointHistory(raw),
+    ...(resolveSessionContext(
+      { ...input, cronHistoryMode: "final-only" },
+      agentId,
+    ) ?? []),
+  ];
+}
+
 /** Undefined preserves full history; [] explicitly removes prior run traces. */
 export function resolveSessionContext(
   input: InboxMessage,
@@ -46,6 +61,7 @@ export function resolveSessionContext(
       publicOnly: true,
     }),
   ];
+  if (references.length === 0) return [];
   const entries = readSessionEntries(
     input.groupName,
     input.sessionId,
