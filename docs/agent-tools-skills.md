@@ -49,13 +49,13 @@
 
 ```json
 {
-  "environment": "shin902/orca",
+  "environment": "env_0123456789abcdef0123456789abcdef",
   "branch": "main",
   "prompt": "upstreamの変更を取り込み、fork固有変更を維持しつつテストしてください"
 }
 ```
 
-3項目は必須の空でない文字列です。shellを介さず、固定の `codex cloud exec --env <environment> --branch <branch> -- <prompt>` を起動します。branchの独自grammarや存在確認は行わず、CLIの検証に委譲します。任意executable・command・追加flags・model / reasoning effortは入力にありません。
+`environment` はlabelではなくcanonicalなopaque実IDを渡します。例のIDは架空の値なので対象environmentの実IDへ置き換えてください。3項目は必須の空でない文字列で、`prompt: "-"` はCLIのstdin読み取りsentinelなので起動前に拒否します。shellを介さず、固定の `codex cloud exec --env <environment> --branch <branch> -- <prompt>` を起動します。branchの独自grammarや存在確認は行わず、CLIの検証に委譲します。任意executable・command・追加flags・model / reasoning effortは入力にありません。
 
 Toolの完了条件はCLI processの終了です。exit 0ならstdoutを返し、非0ならexit codeとstderr、spawn失敗なら診断をTool errorへ含めます。既存のcapability timeout（30秒）やrun revoke / caller abortをCLI processへ伝播します。submitの途中で中断してもCloud側にtaskが作成済みの可能性があるため、再試行前にCodex Cloud側を確認してください。Cloud task完了待ち、status / diff / apply、task ID永続化、PR追跡は行いません。
 

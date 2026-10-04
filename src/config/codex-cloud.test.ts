@@ -19,11 +19,11 @@ describe("Codex Cloud config", () => {
   it("preserves exact environment IDs without normalization", async () => {
     vi.mocked(loadRawConfig).mockResolvedValue({
       codexCloud: {
-        allowedEnvironments: ["shin902/orca", " Other/Repo "],
+        allowedEnvironments: ["env_0123456789abcdef0123456789abcdef"],
       },
     });
     await expect(loadCodexCloudConfig()).resolves.toEqual({
-      allowedEnvironments: ["shin902/orca", " Other/Repo "],
+      allowedEnvironments: ["env_0123456789abcdef0123456789abcdef"],
     });
   });
 
@@ -32,6 +32,9 @@ describe("Codex Cloud config", () => {
     { allowedEnvironments: "*" },
     { allowedEnvironments: [""] },
     { allowedEnvironments: [1] },
+    { allowedEnvironments: [" "] },
+    { allowedEnvironments: [" env_0123456789abcdef0123456789abcdef"] },
+    { allowedEnvironments: ["env_0123456789abcdef0123456789abcdef\n"] },
     { executable: "sh" },
   ])("rejects malformed trusted config: %j", async (codexCloud) => {
     vi.mocked(loadRawConfig).mockResolvedValue({ codexCloud });

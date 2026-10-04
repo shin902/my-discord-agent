@@ -22,7 +22,7 @@ import { getCapabilityDefinition, resolveTools } from "./registry.js";
 vi.mock("../config/config.js", () => ({ loadRawConfig: vi.fn() }));
 
 const args = {
-  environment: "shin902/orca",
+  environment: "env_0123456789abcdef0123456789abcdef",
   branch: "feature/$(touch nope);not-a-shell",
   prompt: "--config danger=true\nDo the work; $(touch nope)",
 };
@@ -118,8 +118,16 @@ describe("Codex Cloud submission", () => {
   it.each([
     {},
     { codexCloud: { allowedEnvironments: [] } },
-    { codexCloud: { allowedEnvironments: ["shin902/orca-other"] } },
-    { codexCloud: { allowedEnvironments: ["SHIN902/ORCA"] } },
+    {
+      codexCloud: {
+        allowedEnvironments: ["env_fedcba9876543210fedcba9876543210"],
+      },
+    },
+    {
+      codexCloud: {
+        allowedEnvironments: ["ENV_0123456789ABCDEF0123456789ABCDEF"],
+      },
+    },
   ])("rejects unauthorized environments before starting the CLI: %j", async (config) => {
     vi.mocked(loadRawConfig).mockResolvedValue(config);
     await installCli(
@@ -128,6 +136,16 @@ describe("Codex Cloud submission", () => {
     await expect(hostTool.execute("submit", args)).rejects.toThrow(
       "environment is not allowed",
     );
+    expect(await readdir(directory)).toEqual(["codex"]);
+  });
+
+  it("rejects the stdin prompt sentinel before starting the CLI", async () => {
+    await installCli(
+      `require('node:fs').writeFileSync(${JSON.stringify(join(directory, "started"))}, 'yes');`,
+    );
+    await expect(
+      hostTool.execute("submit", { ...args, prompt: "-" }),
+    ).rejects.toThrow('Codex Cloud prompt must not be "-"');
     expect(await readdir(directory)).toEqual(["codex"]);
   });
 

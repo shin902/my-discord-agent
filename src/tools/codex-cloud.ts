@@ -15,7 +15,7 @@ export const codexCloudSubmitTool: AgentTool = {
     environment: Type.String({
       minLength: 1,
       description:
-        "Codex Cloud environment ID (must be allowed by host config)",
+        "Canonical opaque Codex Cloud environment ID, not a label (must be allowed by host config)",
     }),
     branch: Type.String({ minLength: 1, description: "Task starting branch" }),
     prompt: Type.String({
@@ -29,6 +29,11 @@ export const codexCloudSubmitTool: AgentTool = {
       branch: string;
       prompt: string;
     };
+    if (prompt === "-") {
+      throw new Error(
+        'Codex Cloud prompt must not be "-" (CLI stdin sentinel)',
+      );
+    }
     const { allowedEnvironments } = await loadCodexCloudConfig();
     if (!allowedEnvironments.includes(environment)) {
       throw new Error(`Codex Cloud environment is not allowed: ${environment}`);
