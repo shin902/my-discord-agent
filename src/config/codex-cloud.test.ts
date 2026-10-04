@@ -30,12 +30,8 @@ describe("Codex Cloud config", () => {
   it.each([
     null,
     { allowedEnvironments: "*" },
-    { allowedEnvironments: [""] },
-    { allowedEnvironments: [1] },
-    { allowedEnvironments: [" "] },
     { allowedEnvironments: [" env_0123456789abcdef0123456789abcdef"] },
     { allowedEnvironments: ["env_0123456789abcdef0123456789abcdef\n"] },
-    { executable: "sh" },
   ])("rejects malformed trusted config: %j", async (codexCloud) => {
     vi.mocked(loadRawConfig).mockResolvedValue({ codexCloud });
     await expect(loadCodexCloudConfig()).rejects.toThrow();

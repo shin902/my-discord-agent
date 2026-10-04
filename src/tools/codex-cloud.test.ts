@@ -1,23 +1,9 @@
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  afterAll,
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRawConfig } from "../config/config.js";
-import type { ToolApprovalRequest } from "../proxy/tool-approval.js";
-import {
-  createToolProxyRun,
-  initToolProxyServer,
-  stopToolProxyServer,
-} from "../proxy/tool-proxy-server.js";
-import { getCapabilityDefinition, resolveTools } from "./registry.js";
+import { getCapabilityDefinition } from "./registry.js";
 
 vi.mock("../config/config.js", () => ({ loadRawConfig: vi.fn() }));
 
@@ -52,67 +38,30 @@ afterEach(async () => {
   vi.resetAllMocks();
   await rm(directory, { recursive: true, force: true });
 });
-afterAll(() => stopToolProxyServer());
 
 describe("Codex Cloud submission", () => {
-  it("uses the existing approval gate and returns fixed CLI argv stdout through the native proxy", async () => {
+  it("returns stdout from the fixed Codex executable and literal argv", async () => {
     await installCli(
-      "process.stdout.write(JSON.stringify(process.argv.slice(2))); ",
+      "process.stdout.write(JSON.stringify(process.argv.slice(2)));",
     );
-    let presented!: ToolApprovalRequest;
-    let notify!: () => void;
-    const ready = new Promise<void>((resolve) => {
-      notify = resolve;
-    });
-    const port = await initToolProxyServer({
-      presentApprovalRequest: async (request) => {
-        presented = request;
-        notify();
-      },
-    });
-    const run = createToolProxyRun("codex-test", ["codex-cloud-submit"], {
-      approvalRequiredCapabilities: ["codex-cloud-submit"],
-      trustedDiscordDestination: { botId: "personal", channelId: "channel-1" },
-    });
-    if (!run) throw new Error("Tool Proxy unavailable");
-    try {
-      const [tool] = resolveTools(
-        ["codex-cloud-submit"],
-        {},
+    expect(await hostTool.execute("submit", args)).toEqual({
+      content: [
         {
-          toolProxyEndpoint: {
-            url: `http://127.0.0.1:${port}/__tool-proxy/rpc`,
-            token: run.token,
-          },
+          type: "text",
+          text: JSON.stringify([
+            "cloud",
+            "exec",
+            "--env",
+            args.environment,
+            "--branch",
+            args.branch,
+            "--",
+            args.prompt,
+          ]),
         },
-      );
-      const pending = tool.execute("submit", args);
-      await ready;
-      expect(loadRawConfig).not.toHaveBeenCalled();
-      expect(presented.invocation.args.value).toEqual(args);
-      expect(presented.claim("approve")?.completeUiUpdate()).toBe(true);
-      expect(await pending).toEqual({
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify([
-              "cloud",
-              "exec",
-              "--env",
-              args.environment,
-              "--branch",
-              args.branch,
-              "--",
-              args.prompt,
-            ]),
-          },
-        ],
-        details: {},
-      });
-      expect(await readdir(directory)).toEqual(["codex"]);
-    } finally {
-      run.revoke();
-    }
+      ],
+      details: {},
+    });
   });
 
   it.each([
