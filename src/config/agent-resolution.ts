@@ -9,7 +9,6 @@ export const AGENT_CONFIG_FIELDS = [
   "skills",
   "mounts",
   "contextFiles",
-  "compaction",
   "agentMemory",
 ] as const satisfies readonly (keyof AgentConfig)[];
 

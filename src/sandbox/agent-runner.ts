@@ -37,6 +37,10 @@ import {
   expandCompaction,
 } from "../features/session-context/compaction.js";
 import {
+  type CompactionConfig,
+  CompactionConfigSchema,
+} from "../features/session-context/config.js";
+import {
   prepareSessionContext,
   preprocessSessionContext,
 } from "../features/session-context/preprocessing.js";
@@ -316,6 +320,7 @@ export async function runAgentLoop(
   imagePaths?: string[],
   historyMessages?: AgentMessage[],
   contextOperation?: ContextOperation,
+  compaction: CompactionConfig = CompactionConfigSchema.parse({}),
 ): Promise<string> {
   const modelConfig = groupConfig.model;
   if (!modelConfig) {
@@ -534,7 +539,7 @@ export async function runAgentLoop(
       alreadyApplied: context.alreadyApplied,
       bootstrap,
       historyMessages,
-      config: groupConfig,
+      compaction,
       systemPrompt: fullSystemPrompt,
       tools: agentTools,
       prompt: promptInput,
@@ -692,6 +697,7 @@ export async function runAgentLoop(
 }
 
 const PayloadSchema = z.object({
+  compaction: CompactionConfigSchema,
   groupName: z.string(),
   sessionId: z.string(),
   agentId: z.string().min(1),
@@ -862,6 +868,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         payload.contextOperation
           ? { ...payload.contextOperation, onCompactionStarted: announceActive }
           : undefined,
+        payload.compaction,
       );
     } catch (error) {
       // Initialization failures must reject pre-attach requests without

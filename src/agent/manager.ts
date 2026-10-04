@@ -41,6 +41,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
 
 import { prepareInitialMemory } from "../features/agent-memory/initial-memory.js";
+import { loadCompactionConfig } from "../features/session-context/config.js";
 import {
   type ActiveRunStopResult,
   registerActiveRun,
@@ -774,6 +775,7 @@ export async function sendMessage(
   }
 
   const agentTimeoutMs = await loadAgentTimeoutMs();
+  const compaction = await loadCompactionConfig();
   if (!options.contextAction)
     await prepareInitialMemory(
       effectiveConfig.agentMemory,
@@ -818,6 +820,7 @@ export async function sendMessage(
     sessionId,
     agentId: options.agentId,
     content: promptContent,
+    compaction,
     contextOperation: {
       action: options.contextAction,
       operationId: options.contextOperationId ?? randomUUID(),

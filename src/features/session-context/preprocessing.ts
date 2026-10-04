@@ -4,7 +4,6 @@ import type {
   CustomMessage,
 } from "@earendil-works/pi-agent-core";
 import { replaceSessionContext } from "../../agent/session.js";
-import type { AgentRuntimeConfig } from "../../config/groups.js";
 import type { initializeSessionBootstrap } from "../../sandbox/session-bootstrap.js";
 import { isSessionTimeAnchorMessage } from "../../sandbox/session-bootstrap.js";
 import {
@@ -17,6 +16,7 @@ import {
   isContextInitialization,
   loadContextSegments,
 } from "./compaction.js";
+import type { CompactionConfig } from "./config.js";
 
 const COMPACTED =
   "コンテキストを圧縮しました。旧履歴はsession-logsで検索できます。";
@@ -98,7 +98,7 @@ export async function preprocessSessionContext(options: {
   alreadyApplied: boolean;
   bootstrap: Awaited<ReturnType<typeof initializeSessionBootstrap>>;
   historyMessages?: AgentMessage[];
-  config: AgentRuntimeConfig;
+  compaction: CompactionConfig;
   systemPrompt: string;
   tools: AgentTool[];
   prompt: string | AgentMessage[];
@@ -143,10 +143,9 @@ export async function preprocessSessionContext(options: {
     );
     if (
       operation.action === "compact" ||
-      (options.config.compaction?.enabled !== false &&
+      (options.compaction.enabled &&
         projectedTokens >
-          execution.model.contextWindow *
-            (options.config.compaction?.threshold ?? 0.7))
+          execution.model.contextWindow * options.compaction.threshold)
     ) {
       const initialMessages = [...bootstrap.initialMessages];
       if (!initialMessages.some(isSessionTimeAnchorMessage))
@@ -165,7 +164,7 @@ export async function preprocessSessionContext(options: {
         messages,
         initialMessages,
         contextMode: historyMessages === undefined ? "full" : "final-only",
-        config: options.config,
+        compaction: options.compaction,
         execution,
         onUsage: options.onUsage,
         onStarted: operation.onCompactionStarted,

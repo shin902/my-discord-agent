@@ -126,15 +126,6 @@ async function run(
     {
       model: { provider: "test", modelId: "test" },
       tools: [],
-      compaction: {
-        keepRecentTokens: 60,
-        ...(settings.threshold === undefined
-          ? {}
-          : { threshold: settings.threshold }),
-        ...(settings.enabled === undefined
-          ? {}
-          : { enabled: settings.enabled }),
-      },
     },
     {
       agentId: "main",
@@ -154,6 +145,11 @@ async function run(
       action,
       operationId: settings.operationId ?? "operation-1",
       allowContextReset: settings.allowContextReset ?? true,
+    },
+    {
+      keepRecentTokens: 60,
+      threshold: settings.threshold ?? 0.7,
+      enabled: settings.enabled ?? true,
     },
   );
 }

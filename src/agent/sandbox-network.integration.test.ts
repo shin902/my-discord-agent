@@ -279,6 +279,7 @@ describe.skipIf(!image || !runtimeImage)(
           sessionId: "fixture",
           agentId: "main",
           content: "Read the page",
+          compaction: {},
           groupConfig: {
             model: { provider: "fixture", modelId: "fixture" },
             tools: ["agent-reach"],

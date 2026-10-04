@@ -60,6 +60,14 @@ vi.mock("../config/credential-proxy.js", () => ({
   loadCredentialProxy: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("../features/session-context/config.js", () => ({
+  loadCompactionConfig: vi.fn().mockResolvedValue({
+    enabled: false,
+    threshold: 0.6,
+    keepRecentTokens: 5000,
+  }),
+}));
+
 vi.mock("../config/agent-config.js", () => ({
   loadAgentTimeoutMs: vi.fn().mockResolvedValue(10 * 60 * 1000),
 }));
@@ -261,6 +269,11 @@ describe("sendMessage: Docker 起動構成", () => {
       contextOperationId: "queue-job",
     });
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    expect(JSON.parse(proc.stdin.write.mock.calls[0][0]).compaction).toEqual({
+      enabled: false,
+      threshold: 0.6,
+      keepRecentTokens: 5000,
+    });
     expect(
       JSON.parse(proc.stdin.write.mock.calls[0][0]).contextOperation,
     ).toEqual({ operationId: "queue-job", allowContextReset: false });

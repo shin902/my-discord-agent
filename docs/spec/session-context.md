@@ -15,7 +15,7 @@ shared channelは親channel、thread / auto-thread / email-modeはthread内で�
 
 通常のAgent jobの推論開始前にcontext使用量を判定し、閾値を超えていれば、そのjob内でcompactしてから今回の入力を処理する。別jobをenqueueして待つ方式やidle監視は使わない。同期Bot実行もRunnerの同じ前処理を使う。
 
-AgentConfigの `compaction` はgroup / Bot profile / channel / cron jobに指定でき、他のAgentConfigと同じくfield単位の完全置換になる。
+`config/config.json` のトップレベル `compaction` を全group / Bot / channel / cron jobで共通利用する。個別のAgentConfigでは指定・上書きできない。Hostで読み込んだ設定だけをRunnerへ渡し、設定ファイル自体はsandboxへ公開しない。
 
 ```json
 "compaction": {
@@ -25,7 +25,7 @@ AgentConfigの `compaction` はgroup / Bot profile / channel / cron jobに指定
 }
 ```
 
-未指定時の既定値は上記。`enabled: false` はautoだけを無効にし、手動compactは利用可能。`threshold` は0より大きく1未満、`keepRecentTokens` は正の整数。recent予算はmodel context windowの20%を上限とする。
+objectまたは各fieldが未指定の場合の既定値は上記。不正な設定は実行前にエラーになる。`enabled: false` はautoだけを無効にし、手動compactは利用可能。`threshold` は0より大きく1未満、`keepRecentTokens` は正の整数。recent予算はmodel context windowの20%を上限とする。
 
 Piの実装を参考に、文字数/4と画像の固定コストでtoken数を概算する。判定にはsystem prompt・tool定義・今回の入力を含める。full contextでは直近の実測usageも使うが、checkpoint内のretained assistantの古いusageは圧縮後の使用量として扱わない。判定はjob開始時の1回だけであり、1つのtool loop内での肥大化や単体で巨大な入力を完全に防ぐものではない。
 
@@ -51,10 +51,10 @@ Runnerはsession-context featureで履歴の準備・manual操作の早期終了
 
 ## appendUserOnlyの保護
 
-`appendUserOnly: true` の設定channel IDを使うsessionでは、**手動clear/compactを拒否し、auto compactも実行しない**。channel設定やcron側の `compaction` overrideでこの保護を解除できない。Discord `/skill`・cron・同期Bot等、入口ではなく対象sessionで判定する。
+`appendUserOnly: true` の設定channel IDを使うsessionでは、**手動clear/compactを拒否し、auto compactも実行しない**。グローバルな `compaction` 設定でもこの保護を解除できない。Discord `/skill`・cron・同期Bot等、入口ではなく対象sessionで判定する。
 
 通常の履歴追記・検索、既存 `/skill`・cronのAgent実行は維持する。この保護は蓄積履歴の置換を防ぐもので、Agent実行全体の禁止ではない。
 
 ## 導入
 
-DB schema変更や既存履歴の一括変換は不要。同じcheckoutでHostとRunner imageを更新し、サービスを再起動する。新commandは別途 [Slash Command登録](../guides/discord-bot-setup.md#6-slash-command-の登録) を実行する。runtime起動時にはdeployしない。旧Runnerへ戻すとcheckpointを展開できないため、checkpoint作成後のrollbackでは対応するHost/Runnerを使うか、停止・backupの上で退避履歴を復元する必要がある。
+DB schema変更や既存履歴の一括変換は不要。旧group / Bot profile / channel / cron jobの `compaction` は無視されるため、必要な設定を `config/config.json` のトップレベルへ移す。設定変更の反映にはHostの再起動が必要。同じcheckoutでHostとRunner imageを更新し、サービスを再起動する。新commandは別途 [Slash Command登録](../guides/discord-bot-setup.md#6-slash-command-の登録) を実行する。runtime起動時にはdeployしない。旧Runnerへ戻すとcheckpointを展開できないため、checkpoint作成後のrollbackでは対応するHost/Runnerを使うか、停止・backupの上で退避履歴を復元する必要がある。

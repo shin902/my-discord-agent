@@ -5,7 +5,6 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { Message, Usage } from "@earendil-works/pi-ai";
 import { loadMessages, replaceSessionContext } from "../../agent/session.js";
-import type { AgentRuntimeConfig } from "../../config/groups.js";
 import {
   type AgentExecutionOptions,
   runAgent,
@@ -17,6 +16,7 @@ import {
   isSystemPromptSnapshotMessage,
 } from "../../sandbox/session-bootstrap.js";
 import { isInitialMemoryMessage } from "../agent-memory/memory-context.js";
+import type { CompactionConfig } from "./config.js";
 
 export type ContextAction = "clear" | "compact";
 export interface ContextOperation {
@@ -218,7 +218,7 @@ export async function compactSessionContext(options: {
   messages: AgentMessage[];
   initialMessages: AgentMessage[];
   contextMode: "full" | "final-only";
-  config: AgentRuntimeConfig;
+  compaction: CompactionConfig;
   onUsage?: (usage: Usage) => void;
   onStarted?: () => void;
   execution: Pick<
@@ -227,7 +227,7 @@ export async function compactSessionContext(options: {
   >;
 }): Promise<AgentMessage[]> {
   const keepRecentTokens = Math.min(
-    options.config.compaction?.keepRecentTokens ?? 20_000,
+    options.compaction.keepRecentTokens,
     Math.floor(options.execution.model.contextWindow * 0.2),
   );
   const { older, recent } = splitCompactionHistory(

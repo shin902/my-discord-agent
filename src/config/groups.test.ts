@@ -17,13 +17,13 @@ const setupRawGroups = async (raw: unknown) => {
 };
 
 describe("loadGroups", () => {
-  it("preserves compaction settings through trusted layers and validates threshold/token limits", async () => {
+  it("ignores compaction overrides in group, channel, and Bot settings", async () => {
     const settings = {
       enabled: true,
       threshold: 0.7,
       keepRecentTokens: 20_000,
     };
-    const { loadGroups, AgentConfigSchema } = await setupRawGroups([
+    const { loadGroups } = await setupRawGroups([
       {
         name: "group",
         channels: [
@@ -38,20 +38,19 @@ describe("loadGroups", () => {
     ]);
     const { resolveAgentConfig } = await import("./agent-resolution.js");
     const [group] = await loadGroups();
-    expect(resolveAgentConfig(group).compaction).toEqual(settings);
-    expect(resolveAgentConfig(group, group.channels[0]).compaction).toEqual({
-      enabled: false,
+    const { BotProfileSchema } = await import("./bots.js");
+    const bot = BotProfileSchema.parse({
+      group: "group",
+      description: "worker",
+      instructions: "work",
+      compaction: { enabled: false },
     });
-    for (const compaction of [
-      { threshold: 0 },
-      { threshold: 1 },
-      { threshold: "0.7" },
-      { keepRecentTokens: 0 },
-      { keepRecentTokens: 1.5 },
-      { enabled: "true" },
-    ]) {
-      expect(AgentConfigSchema.safeParse({ compaction }).success).toBe(false);
-    }
+    expect(group).not.toHaveProperty("compaction");
+    expect(group.channels[0]).not.toHaveProperty("compaction");
+    expect(bot).not.toHaveProperty("compaction");
+    expect(
+      resolveAgentConfig(group, bot, group.channels[0]),
+    ).not.toHaveProperty("compaction");
   });
 
   it.each([
