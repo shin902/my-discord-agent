@@ -220,7 +220,9 @@ function createInRunCompaction(
     if (
       Math.max(
         fixedTokens + contextTokens,
-        estimatePreviousContextTokens(appended),
+        options.historyMessages === undefined
+          ? estimatePreviousContextTokens(appended)
+          : 0,
       ) <=
       options.execution.model.contextWindow * options.compaction.threshold
     )

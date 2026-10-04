@@ -432,11 +432,16 @@ describe("non-destructive session context maintenance", () => {
   });
 
   it.each([
-    { threshold: 0.5, shouldCompact: true },
-    { threshold: 0.9, shouldCompact: false },
-  ])("uses configurable thresholds and measured usage without retriggering on retained pre-compaction usage (%j)", async ({
+    { threshold: 0.5, shouldCompact: true, finalOnly: false, padding: 0 },
+    { threshold: 0.9, shouldCompact: false, finalOnly: false, padding: 0 },
+    { threshold: 0.5, shouldCompact: false, finalOnly: true, padding: 0 },
+    { threshold: 0.9, shouldCompact: false, finalOnly: true, padding: 0 },
+    { threshold: 0.5, shouldCompact: true, finalOnly: true, padding: 300_000 },
+  ])("uses measured usage only for full history and estimated size for final-only, without retriggering on retained pre-compaction usage (%j)", async ({
     threshold,
     shouldCompact,
+    finalOnly,
+    padding,
   }) => {
     const recent = assistant("Recent answer");
     if (recent.role !== "assistant")
@@ -449,9 +454,24 @@ describe("non-destructive session context maintenance", () => {
       user("Recent"),
       recent,
     ]);
-    await run(undefined, { threshold });
+    const history = finalOnly
+      ? [assistant(`Old published answer ${"p".repeat(padding)}`), recent]
+      : undefined;
+    await run(undefined, { threshold, history });
+    const inference = execute.mock.calls.at(-1)?.[0] as AgentExecutionOptions;
+    const projected = await inference.transformContext?.([
+      ...inference.messages,
+      user("New input"),
+    ]);
+    expect(projected).toEqual([...inference.messages, user("New input")]);
     expect(execute).toHaveBeenCalledTimes(shouldCompact ? 2 : 1);
-    await run(undefined, { threshold, operationId: "next" });
+    await run(undefined, {
+      threshold,
+      operationId: "next",
+      history: finalOnly ? inference.messages : undefined,
+    });
+    const next = execute.mock.calls.at(-1)?.[0] as AgentExecutionOptions;
+    await next.transformContext?.([...next.messages, user("New input")]);
     expect(execute).toHaveBeenCalledTimes(shouldCompact ? 3 : 2);
   });
 
