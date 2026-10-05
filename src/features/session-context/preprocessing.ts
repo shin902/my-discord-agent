@@ -1,5 +1,6 @@
 import type {
   AgentMessage,
+  AgentOptions,
   AgentTool,
   CustomMessage,
 } from "@earendil-works/pi-agent-core";
@@ -7,6 +8,7 @@ import { replaceSessionContext } from "../../agent/session.js";
 import type { initializeSessionBootstrap } from "../../sandbox/session-bootstrap.js";
 import { isSessionTimeAnchorMessage } from "../../sandbox/session-bootstrap.js";
 import {
+  type CompactionMessage,
   type ContextOperation,
   compactSessionContext,
   contextArchiveId,
@@ -15,6 +17,8 @@ import {
   isCompactionMessage,
   isContextInitialization,
   loadContextSegments,
+  splitCompactionHistory,
+  summarizeConversation,
 } from "./compaction.js";
 import type { CompactionConfig } from "./config.js";
 
@@ -173,6 +177,7 @@ export async function preprocessSessionContext(options: {
   }
   return {
     messages,
+    prepareNextTurnWithContext: createInRunCompaction(options),
     response:
       operation?.action === "compact"
         ? messages.some(
@@ -183,5 +188,84 @@ export async function preprocessSessionContext(options: {
           ? COMPACTED
           : "圧縮対象の古い履歴がありません。履歴はそのまま保持しています。"
         : undefined,
+  };
+}
+
+function createInRunCompaction(
+  options: Parameters<typeof preprocessSessionContext>[0],
+): AgentOptions["prepareNextTurnWithContext"] {
+  const operation = options.operation;
+  if (!options.compaction.enabled || !operation?.allowContextReset)
+    return undefined;
+  const fixedTokens = estimateMessageTokens({
+    role: "user",
+    content:
+      options.systemPrompt +
+      JSON.stringify(
+        options.tools.map(({ name, description, parameters }) => ({
+          name,
+          description,
+          parameters,
+        })),
+      ),
+    timestamp: Date.now(),
+  });
+  return async ({ context }, signal) => {
+    try {
+      const messages = context.messages;
+      const contextTokens = (
+        await options.execution.convertToLlm(messages)
+      ).reduce((tokens, message) => tokens + estimateMessageTokens(message), 0);
+      if (
+        Math.max(
+          fixedTokens + contextTokens,
+          options.historyMessages === undefined
+            ? estimatePreviousContextTokens(messages)
+            : 0,
+        ) <=
+        options.execution.model.contextWindow * options.compaction.threshold
+      )
+        return undefined;
+      const { older, recent } = splitCompactionHistory(
+        messages,
+        Math.min(
+          options.compaction.keepRecentTokens,
+          Math.floor(options.execution.model.contextWindow * 0.2),
+        ),
+      );
+      if (!older.length || signal?.aborted) return undefined;
+      const summary = await summarizeConversation(
+        older,
+        { ...options.execution, signal: signal ?? options.execution.signal },
+        options.onUsage,
+      );
+      const next = [
+        ...messages.filter(isContextInitialization),
+        {
+          role: "custom",
+          customType: "session-compaction",
+          content: summary,
+          display: false,
+          timestamp: Date.now(),
+          archiveSessionId: options.sessionId,
+          operationId: operation.operationId,
+          contextMode:
+            options.historyMessages === undefined ? "full" : "final-only",
+          recentMessages: recent,
+        } satisfies CompactionMessage,
+      ];
+      const nextTokens = (await options.execution.convertToLlm(next)).reduce(
+        (tokens, message) => tokens + estimateMessageTokens(message),
+        0,
+      );
+      if (nextTokens >= contextTokens || signal?.aborted) return undefined;
+      // Do not replace durable history mid-run: public-final entry references must stay valid.
+      return { context: { ...context, messages: next } };
+    } catch {
+      process.stderr.write(
+        "[compaction] In-run compaction failed; continuing with unchanged context\n",
+      );
+      return undefined;
+    }
   };
 }

@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { Type } from "typebox";
 import {
   afterAll,
   beforeAll,
@@ -13,23 +14,30 @@ import {
 } from "vitest";
 import type { AgentExecutionOptions } from "../../sandbox/agent-execution.js";
 
-const { execute, model, readCommittedConversations } = vi.hoisted(() => ({
-  execute: vi.fn(),
-  readCommittedConversations: vi.fn(),
-  model: {
-    id: "test",
-    name: "Test",
-    api: "openai-completions",
-    provider: "test",
-    baseUrl: "https://example.com",
-    reasoning: false,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128_000,
-    maxTokens: 8192,
-  },
-}));
+const { execute, stream, model, readCommittedConversations } = vi.hoisted(
+  () => ({
+    execute: vi.fn(),
+    stream: vi.fn(),
+    readCommittedConversations: vi.fn(),
+    model: {
+      id: "test",
+      name: "Test",
+      api: "openai-completions",
+      provider: "test",
+      baseUrl: "https://example.com",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128_000,
+      maxTokens: 8192,
+    },
+  }),
+);
 vi.mock("../../sandbox/agent-execution.js", () => ({ runAgent: execute }));
+vi.mock("@earendil-works/pi-ai/compat", async (original) => ({
+  ...(await original<typeof import("@earendil-works/pi-ai/compat")>()),
+  streamSimple: stream,
+}));
 vi.mock("../../agent/model.js", () => ({ resolveModel: async () => model }));
 vi.mock("../../queue/repository.js", () => ({
   getQueueRepository: () => ({ readCommittedConversations }),
@@ -117,6 +125,7 @@ async function run(
     history?: AgentMessage[];
     enabled?: boolean;
     threshold?: number;
+    keepRecentTokens?: number;
   } = {},
 ) {
   return runner.runAgentLoop(
@@ -147,7 +156,7 @@ async function run(
       allowContextReset: settings.allowContextReset ?? true,
     },
     {
-      keepRecentTokens: 60,
+      keepRecentTokens: settings.keepRecentTokens ?? 60,
       threshold: settings.threshold ?? 0.7,
       enabled: settings.enabled ?? true,
     },
@@ -242,7 +251,15 @@ describe("non-destructive session context maintenance", () => {
       assistant("Recent answer"),
     ];
     await seed(history);
-    await run("compact");
+    await run("compact", {
+      keepRecentTokens: history
+        .slice(2)
+        .reduce(
+          (tokens, message) =>
+            tokens + compaction.estimateMessageTokens(message),
+          0,
+        ),
+    });
     const archive = compaction.contextArchiveId("channel", "operation-1");
     expect(await sessions.loadMessages(group, archive, "main")).toEqual(
       expect.arrayContaining(history),
@@ -406,6 +423,9 @@ describe("non-destructive session context maintenance", () => {
       !protectedSession && !disabled ? 30 : 15,
     );
     const shouldCompact = !protectedSession && !disabled;
+    expect(
+      typeof execute.mock.calls.at(-1)?.[0].prepareNextTurnWithContext,
+    ).toBe(shouldCompact ? "function" : "undefined");
     expect(execute).toHaveBeenCalledTimes(shouldCompact ? 2 : 1);
     const active = await sessions.loadMessages(group, "channel", "main");
     expect(active.some(compaction.isCompactionMessage)).toBe(shouldCompact);
@@ -421,11 +441,16 @@ describe("non-destructive session context maintenance", () => {
   });
 
   it.each([
-    { threshold: 0.5, shouldCompact: true },
-    { threshold: 0.9, shouldCompact: false },
-  ])("uses configurable thresholds and measured usage without retriggering on retained pre-compaction usage (%j)", async ({
+    { threshold: 0.5, shouldCompact: true, finalOnly: false, padding: 0 },
+    { threshold: 0.9, shouldCompact: false, finalOnly: false, padding: 0 },
+    { threshold: 0.5, shouldCompact: false, finalOnly: true, padding: 0 },
+    { threshold: 0.9, shouldCompact: false, finalOnly: true, padding: 0 },
+    { threshold: 0.5, shouldCompact: true, finalOnly: true, padding: 300_000 },
+  ])("uses measured usage only for full history and estimated size for final-only, without retriggering on retained pre-compaction usage (%j)", async ({
     threshold,
     shouldCompact,
+    finalOnly,
+    padding,
   }) => {
     const recent = assistant("Recent answer");
     if (recent.role !== "assistant")
@@ -438,9 +463,42 @@ describe("non-destructive session context maintenance", () => {
       user("Recent"),
       recent,
     ]);
-    await run(undefined, { threshold });
+    const history = finalOnly
+      ? [assistant(`Old published answer ${"p".repeat(padding)}`), recent]
+      : undefined;
+    await run(undefined, { threshold, history });
+    const inference = execute.mock.calls.at(-1)?.[0] as AgentExecutionOptions;
+    expect(
+      await inference.prepareNextTurnWithContext?.({
+        message: recent as import("@earendil-works/pi-ai").AssistantMessage,
+        toolResults: [],
+        newMessages: [],
+        context: {
+          messages: [...inference.messages, user("New input")],
+          systemPrompt: inference.systemPrompt,
+          tools: inference.tools,
+        },
+      }),
+    ).toBeUndefined();
     expect(execute).toHaveBeenCalledTimes(shouldCompact ? 2 : 1);
-    await run(undefined, { threshold, operationId: "next" });
+    await run(undefined, {
+      threshold,
+      operationId: "next",
+      history: finalOnly ? inference.messages : undefined,
+    });
+    const next = execute.mock.calls.at(-1)?.[0] as AgentExecutionOptions;
+    expect(
+      await next.prepareNextTurnWithContext?.({
+        message: recent as import("@earendil-works/pi-ai").AssistantMessage,
+        toolResults: [],
+        newMessages: [],
+        context: {
+          messages: [...next.messages, user("New input")],
+          systemPrompt: next.systemPrompt,
+          tools: next.tools,
+        },
+      }),
+    ).toBeUndefined();
     expect(execute).toHaveBeenCalledTimes(shouldCompact ? 3 : 2);
   });
 
@@ -505,6 +563,7 @@ describe("non-destructive session context maintenance", () => {
     const recentFinal = assistant("Latest published final");
     await run("compact", {
       operationId: "public-again",
+      keepRecentTokens: compaction.estimateMessageTokens(recentFinal),
       history: [
         ...last.messages,
         assistant(`New published answer ${"n".repeat(5000)}`),
@@ -654,6 +713,136 @@ describe("non-destructive session context maintenance", () => {
         "main",
       ),
     ).toEqual([]);
+  });
+
+  it.each([
+    "success",
+    "provider-error",
+    "template-error",
+    "no-reduction",
+    "aborted-summary",
+  ])("prepares tool-loop context with best-effort compaction and applies steering received during preparation (%s)", async (outcome) => {
+    model.contextWindow = 2000;
+    const previous = [user("Earlier request"), assistant("Earlier answer")];
+    await seed(previous);
+    const { runAgent } = await vi.importActual<
+      typeof import("../../sandbox/agent-execution.js")
+    >("../../sandbox/agent-execution.js");
+    const normal = execute.getMockImplementation();
+    if (!normal) throw new Error("Missing inference fixture");
+    const { createSteeringController } = await import(
+      "../../sandbox/steering.js"
+    );
+    const steering = createSteeringController(group, "channel", "main");
+    const instruction = "Use only verified facts";
+    const toolText = "large tool output ".repeat(1000);
+    const read = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: toolText }],
+      details: {},
+    }));
+    execute.mockImplementation(async (options: AgentExecutionOptions) => {
+      if (
+        typeof options.prompt === "string" &&
+        options.prompt.startsWith("Summarize this conversation")
+      ) {
+        expect(await steering.receive(instruction)).toBe(true);
+        if (outcome === "provider-error")
+          throw new Error("Summary provider unavailable");
+        const result = await normal(options);
+        if (outcome === "template-error")
+          result.response = "Invalid checkpoint";
+        if (outcome === "no-reduction")
+          result.response = summary + "x".repeat(100_000);
+        if (outcome === "aborted-summary") {
+          result.response = "";
+          result.terminalStopReason = "aborted";
+        }
+        return result;
+      }
+      return runAgent({
+        ...options,
+        onAgentCreated: (agent) => steering.attach(agent),
+        tools: [
+          {
+            name: "read",
+            label: "Read",
+            description: "Read",
+            parameters: Type.Object({}),
+            execute: read,
+          },
+        ],
+      });
+    });
+    stream.mockReset().mockImplementation((_model, context) => {
+      const index = stream.mock.calls.length;
+      if (index > 1) {
+        const sent = JSON.stringify(context.messages);
+        expect(sent).toContain(instruction);
+        if (outcome === "success") {
+          expect(sent).toContain("ID=12345");
+          expect(sent).not.toContain(toolText);
+        } else {
+          expect(sent).toContain(toolText);
+          expect(sent).not.toContain("Previous conversation checkpoint");
+        }
+      }
+      const message =
+        index < 3
+          ? {
+              ...assistant(""),
+              stopReason: "toolUse",
+              content: [
+                {
+                  type: "toolCall",
+                  id: `call-${index}`,
+                  name: "read",
+                  arguments: {},
+                },
+              ],
+            }
+          : assistant("Finished");
+      return {
+        async *[Symbol.asyncIterator]() {},
+        result: async () => message,
+      };
+    });
+    await expect(run()).resolves.toBe("Finished");
+    expect(stream).toHaveBeenCalledTimes(3);
+    expect(read).toHaveBeenCalledTimes(2);
+    const summaries = execute.mock.calls.filter(
+      ([options]) =>
+        typeof options.prompt === "string" &&
+        options.prompt.startsWith("Summarize this conversation"),
+    );
+    expect(summaries).toHaveLength(2);
+    if (outcome === "success")
+      expect(summaries[1][0].prompt).toContain("ID=12345");
+    await steering.waitForPersistence();
+    const raw = await sessions.loadMessages(group, "channel", "main");
+    expect(raw.some(compaction.isCompactionMessage)).toBe(false);
+    expect(
+      raw.filter(
+        (message) =>
+          message.role === "custom" &&
+          message.customType === "steering-instruction",
+      ),
+    ).toHaveLength(2);
+    expect(
+      raw
+        .filter((message) => message.role === "toolResult")
+        .map((message) => message.content),
+    ).toEqual([
+      [{ type: "text", text: toolText }],
+      [{ type: "text", text: toolText }],
+    ]);
+    expect(raw.filter((message) => message.role === "user")).toEqual([
+      previous[0],
+      {
+        role: "user",
+        content: [{ type: "text", text: "New input" }],
+        timestamp: expect.any(Number),
+      },
+    ]);
   });
 
   it("failed ordinary inference after auto compact retries from the already committed checkpoint", async () => {
