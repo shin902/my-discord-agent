@@ -1,0 +1,23 @@
+import { z } from "zod";
+import { loadRawConfig } from "./config.js";
+
+export const CodexCloudConfigSchema = z.strictObject({
+  allowedEnvironments: z
+    .array(
+      z
+        .string()
+        .min(1)
+        .refine(
+          (id) => id === id.trim(),
+          "Use the canonical environment ID without surrounding whitespace",
+        ),
+    )
+    .default([]),
+});
+
+export async function loadCodexCloudConfig() {
+  const raw = await loadRawConfig();
+  return CodexCloudConfigSchema.parse(
+    raw.codexCloud === undefined ? {} : raw.codexCloud,
+  );
+}

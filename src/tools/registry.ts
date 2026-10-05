@@ -18,6 +18,7 @@ import {
   validateToolArgs,
   wrapToolInputValidation,
 } from "./capability.js";
+import { codexCloudSubmitTool } from "./codex-cloud.js";
 import { dateTool } from "./date.js";
 import { financeTools } from "./finance.js";
 import {
@@ -141,6 +142,7 @@ function hostCapability(
 
 const CAPABILITIES = {
   ...RUNTIME_CAPABILITIES,
+  "codex-cloud-submit": hostCapability(codexCloudSubmitTool),
   date: {
     tool: "date",
     executor: "sandbox",

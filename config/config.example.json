@@ -15,6 +15,9 @@
     "provider": "zai-custom",
     "modelId": "glm-4.7-flash"
   },
+  "codexCloud": {
+    "allowedEnvironments": []
+  },
   "xSavedReceiver": {
     "enabled": false,
     "port": 8787

@@ -11,6 +11,7 @@
 | `bot` | toolsへ明示的に追加したAgentだけが利用できる、Bot RegistryのBotを `run` / `resume` / `list` で呼び出す組み込みオーケストレーションツール。`run` / `resume` は同じtool call内で完了まで待機し、結果を返す（キュー投入や非同期実行はしない） |
 | `subagent` | toolsへ正確に明示したAgentだけが利用できる、自己完結したタスクをephemeral subagentへ委譲する組み込みツール。親の実行設定を引き継ぎ、bounded recursive delegationを行う。 |
 | `bash` | サンドボックス内でシェルコマンドを実行 |
+| `codex-cloud-submit` | hostのログイン済みCodex CLIで、許可environmentへCloud taskをsubmit。CLI終了時のstdoutを返し、Cloud task完了は待たない |
 | `date` | Asia/Tokyo（JST）の正確な現在日時を取得。Bash・ネットワーク不要。セッション開始時刻ではなく「今」の確認に使う |
 | `video-understand` | Geminiで映像・音声を解析。公開YouTube動画URLと10MiB以下のsandbox内動画に対応。[設定と制限](video-understanding.md) |
 | `finance-record-transaction` | 収入・支出を正の整数円とtypeで記録し、保存時の符号変換をTool側で行う |
@@ -41,6 +42,22 @@
 | `list-pull-request-comments` | GitHub Pull Request の会話コメント・レビュー・インラインコメントを全件取得し、Markdown で返す |
 | `comment-issue` | GitHub Issue に Markdown コメントを投稿 |
 | `tavily-search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
+
+### Codex Cloud submit
+
+`codex-cloud-submit` はhost capabilityです。[trusted configのenvironment allowlist](config.md#codexcloud) と、run-scoped Tool Proxy authorityの両方で許可されたsubmitだけを実行します。確認が必要なら既存の `approvalRequiredTools` を利用します。
+
+```json
+{
+  "environment": "env_0123456789abcdef0123456789abcdef",
+  "branch": "main",
+  "prompt": "upstreamの変更を取り込み、fork固有変更を維持しつつテストしてください"
+}
+```
+
+`environment` はlabelではなくcanonicalなopaque実IDを渡します。例のIDは架空の値なので対象environmentの実IDへ置き換えてください。3項目は必須の空でない文字列で、`prompt: "-"` はCLIのstdin読み取りsentinelなので起動前に拒否します。shellを介さず、固定の `codex cloud exec --env <environment> --branch <branch> -- <prompt>` を起動します。branchの独自grammarや存在確認は行わず、CLIの検証に委譲します。任意executable・command・追加flags・model / reasoning effortは入力にありません。
+
+Toolの完了条件はCLI processの終了です。exit 0ならstdoutを返し、非0ならexit codeとstderr、spawn失敗なら診断をTool errorへ含めます。既存のcapability timeout（30秒）やrun revoke / caller abortをCLI processへ伝播します。submitの途中で中断してもCloud側にtaskが作成済みの可能性があるため、再試行前にCodex Cloud側を確認してください。Cloud task完了待ち、status / diff / apply、task ID永続化、PR追跡は行いません。
 
 ### bashの出力と一時ファイル
 
